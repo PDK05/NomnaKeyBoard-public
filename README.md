@@ -45,15 +45,16 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 Sau khi cài: mở ứng dụng "Nôm Na", làm 2 bước bật và chọn "Nôm Na - Bàn phím Hán Nôm".
 
-Phông dự phòng `fonts/hannom-extra.ttf` (cắt từ Jigmo, CC0) không có trong git; tải từ Release `fonts-v1`
-trước khi build: `gh release download fonts-v1 -R PDK05/NomnaKeyBoard-public -D fonts` (xem
-[fonts/README.md](fonts/README.md)). Phông chính `fonts/hannom.ttf` không phát hành ở đây; thiếu thì bàn phím
-dùng phông của máy.
+Phông hiển thị `fonts/hannom.ttf` (MiSans L3) và `fonts/hannom-extra.ttf` (cắt từ Jigmo, CC0) không có trong
+git; tải từ Release `fonts-v1` trước khi build: `gh release download fonts-v1 -R PDK05/NomnaKeyBoard-public -D fonts`
+(xem [fonts/README.md](fonts/README.md)). Thiếu thì bàn phím dùng phông của máy.
+
+APK cài thử: xem mục [Releases](https://github.com/PDK05/NomnaKeyBoard-public/releases).
 
 ## Giấy phép
 
 Mã nguồn: [MIT](LICENSE). Dữ liệu và phông bên thứ ba trong `data/` giữ giấy phép của nguồn gốc
-(Unihan, Make Me a Hanzi, cjkvi-ids, NomDB, Leipzig Corpora Collection, Jigmo, LXGW WenKai).
+(Unihan, Make Me a Hanzi, cjkvi-ids, NomDB, Leipzig Corpora Collection, Jigmo, LXGW WenKai, MiSans).
 
 ## Huấn luyện lại
 

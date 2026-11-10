@@ -1,0 +1,9 @@
+<!-- Bàn phím một tay: bàn phím thu về một bên, mũi tên chỉ hướng dồn. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+        android:pathData="M9,6h12c0.55,0 1,0.45 1,1v10c0,0.55 -0.45,1 -1,1H9c-0.55,0 -1,-0.45 -1,-1V7c0,-0.55 0.45,-1 1,-1zM9.8,7.8v8.4h10.4V7.8z" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M11,9.2h1.6v1.6H11zM13.7,9.2h1.6v1.6h-1.6zM16.4,9.2H18v1.6h-1.6zM11,12h1.6v1.6H11zM13.7,12h1.6v1.6h-1.6zM16.4,12H18v1.6h-1.6zM12.2,14.6h5.6v0.8h-5.6z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M6.4,8.6L3,12l3.4,3.4 1.1,-1.1L5.2,12l2.3,-2.3z" />
+</vector>

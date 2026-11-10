@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Như values/themes.xml, thêm màn hình chờ: hệ thống chỉ vẽ nền trắng, icon do
+         SettingsActivity.playSplash tự thêm và cho nổi lên. -->
+    <style name="SettingsTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:colorAccent">#3F5A92</item>
+        <item name="android:fontFamily">@font/roboto</item>
+        <item name="android:windowSplashScreenBackground">#FFFFFF</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+    </style>
+</resources>

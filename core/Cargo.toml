@@ -1,0 +1,9 @@
+[package]
+name = "hannom-core"
+version = "0.1.0"
+edition = "2021"
+description = "Lõi Bàn phím Hán Nôm: Telex, từ điển, gợi ý"
+license = "MIT"
+
+[dependencies]
+unicode-normalization = "0.1"

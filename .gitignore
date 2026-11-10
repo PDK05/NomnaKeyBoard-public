@@ -1,0 +1,61 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+out/
+.next/
+.nuxt/
+.svelte-kit/
+.vite/
+coverage/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python (nếu có script phụ trợ)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Misc
+*.tmp
+.cache/
+
+# Rust
+target/
+
+# Phông Hán Nôm (bản quyền riêng, không đưa lên git) – xem fonts/README.md
+fonts/*.ttf
+fonts/*.otf
+
+# Dữ liệu huấn luyện sinh lại được: ảnh đã kết xuất, checkpoint
+data/cache/
+data/runs/

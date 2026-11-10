@@ -1,0 +1,8 @@
+[package]
+name = "hannom-handwriting"
+version = "0.1.0"
+edition = "2021"
+description = "Nhận dạng chữ Hán Nôm viết tay (CNN theo ảnh, không phụ thuộc thứ tự nét)"
+license = "MIT"
+
+[dependencies]

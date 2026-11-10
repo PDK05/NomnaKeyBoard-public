@@ -1,0 +1,15 @@
+[package]
+name = "hannom-jni"
+version = "0.1.0"
+edition = "2021"
+description = "Cầu nối JNI giữa lõi Hán Nôm và bàn phím Android"
+license = "MIT"
+
+[lib]
+name = "hannom_jni"
+crate-type = ["cdylib"]
+
+[dependencies]
+hannom-core = { path = "../core" }
+hannom-handwriting = { path = "../handwriting" }
+jni-sys = "0.3"

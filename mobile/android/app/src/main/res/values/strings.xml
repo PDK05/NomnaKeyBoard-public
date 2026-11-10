@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Nôm Na</string>
+    <string name="ime_name">Nôm Na - Bàn phím Hán Nôm</string>
+    <string name="subtype_label">Tiếng Việt · 㗂越 (漢喃)</string>
+    <string name="import_dictionary">Nhập vào từ điển Hán Nôm</string>
+</resources>

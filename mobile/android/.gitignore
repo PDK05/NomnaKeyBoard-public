@@ -1,0 +1,10 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+# Sinh ra khi build: thư viện Rust và từ điển gốc
+app/src/main/jniLibs/
+app/src/main/assets/dict/
+app/src/main/assets/fonts/
+app/src/main/assets/models/

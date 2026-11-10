@@ -79,7 +79,7 @@ fun Context.sp(v: Float): Float = TypedValue.applyDimension(TypedValue.COMPLEX_U
 
 /**
  * Phông hiển thị chữ Hán Nôm ngoài BMP (vd. 𡨸): phông người dùng chọn, nếu không thì phông
- * đi kèm `assets/fonts/hannom.ttf` (MiSans L3). `null` nếu không có phông nào.
+ * đi kèm `assets/fonts/MiSans L3.ttf`. `null` nếu không có phông nào.
  */
 fun Context.hanNomTypeface(): Typeface? = FontCache.get(this)
 
@@ -150,7 +150,8 @@ fun TextView.useHanNomFont() {
 }
 
 private object FontCache {
-    private const val BUNDLED = "fonts/hannom.ttf"
+    private const val BUNDLED_NAME = "MiSans L3.ttf"
+    private const val BUNDLED = "fonts/$BUNDLED_NAME"
     /** Chữ Nôm mà [BUNDLED] thiếu (CJK mở rộng G–J…), cắt từ Jigmo bằng `tools/fonts/extra.py`. */
     private const val EXTRA = "fonts/hannom-extra.ttf"
     private var key: Long? = null
@@ -172,7 +173,7 @@ private object FontCache {
      */
     private fun load(context: Context, custom: File?): Typeface? {
         val bundled = context.assets.list("fonts").orEmpty()
-        if (custom == null && "hannom.ttf" !in bundled) return null
+        if (custom == null && BUNDLED_NAME !in bundled) return null
         if (android.os.Build.VERSION.SDK_INT >= 29 && "hannom-extra.ttf" in bundled) {
             runCatching {
                 val main = if (custom != null) Font.Builder(custom).build() else Font.Builder(context.assets, BUNDLED).build()

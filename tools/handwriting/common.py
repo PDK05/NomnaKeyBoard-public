@@ -26,7 +26,7 @@ FONTS = [
     (DATA / "fonts/Jigmo.ttf", 0),
     (DATA / "fonts/Jigmo2.ttf", 0),
     (DATA / "fonts/Jigmo3.ttf", 0),
-    (REPO / "fonts/hannom.ttf", 0),
+    (REPO / "fonts/MiSans L3.ttf", 0),
 ]
 
 CACHE = DATA / "cache"

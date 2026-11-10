@@ -97,9 +97,13 @@ val copyDictionary = tasks.register<Copy>("copyDictionary") {
 }
 
 // Phông Hán Nôm và phông dự phòng cho chữ nó thiếu (không có trên git, xem fonts/README.md);
-// thiếu thì dùng phông của máy.
+// thiếu thì dùng phông của máy. MiSans giữ đúng tên gốc "MiSans L3.ttf"; GitHub Release đổi dấu cách thành dấu
+// chấm nên nhận cả "MiSans.L3.ttf".
 val copyFont = tasks.register<Copy>("copyFont") {
-    from(repoRoot.resolve("fonts")) { include("hannom.ttf", "hannom-extra.ttf") }
+    from(repoRoot.resolve("fonts")) {
+        include("MiSans L3.ttf", "MiSans.L3.ttf", "hannom-extra.ttf")
+        rename("MiSans\\.L3\\.ttf", "MiSans L3.ttf")
+    }
     into(layout.projectDirectory.dir("src/main/assets/fonts"))
 }
 

@@ -1,4 +1,4 @@
-"""Dựng `fonts/hannom-extra.ttf`: phông dự phòng cho các chữ Hán Nôm mà `fonts/hannom.ttf` (MiSans L3) thiếu.
+"""Dựng `fonts/hannom-extra.ttf`: phông dự phòng cho các chữ Hán Nôm mà `fonts/MiSans L3.ttf` thiếu.
 
 MiSans L3 không có nhiều chữ Nôm mới (CJK mở rộng G, H, I, J) và vài chữ ở B–F, nên các chữ đó hiện
 thành ô trắng. Jigmo (CC0, phủ đủ mọi khối CJK) có hết: lấy đúng các chữ ngoài BMP mà MiSans thiếu,
@@ -24,7 +24,7 @@ FIRST = 0x20000
 
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
-    have = set(TTFont(REPO / "fonts/hannom.ttf", lazy=True).getBestCmap())
+    have = set(TTFont(REPO / "fonts/MiSans L3.ttf", lazy=True).getBestCmap())
     tmp = REPO / "fonts/.extra"
     tmp.mkdir(exist_ok=True)
     parts = []

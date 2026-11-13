@@ -150,6 +150,11 @@ class HanNomEngine private constructor(private val context: Context) {
         if (NativeCore.select(handle, text, reading)) dirty = true
     }
 
+    /** Người dùng đưa ra cụm [text] (âm [reading]) cho chuỗi phím [keys]: thêm / tăng cụm, nhớ mã gõ tắt. */
+    @Synchronized fun learn(keys: String, text: String, reading: String) {
+        if (NativeCore.learn(handle, keys, text, reading)) dirty = true
+    }
+
     /** Lưu độ phổ biến đã đổi (gọi khi đóng bàn phím, không lưu sau mỗi lần chọn). */
     fun saveLearned() {
         if (dirty) save()

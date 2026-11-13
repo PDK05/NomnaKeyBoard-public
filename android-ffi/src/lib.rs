@@ -323,6 +323,22 @@ pub unsafe extern "system" fn Java_com_hannom_ime_NativeCore_select(
     changed as jboolean
 }
 
+/// Người dùng đưa ra cụm `text` (âm `reading`) cho chuỗi phím `keys` ([`Engine::learn`]): thêm / tăng cụm,
+/// nhớ cả mã gõ tắt toàn phụ âm.
+#[no_mangle]
+pub unsafe extern "system" fn Java_com_hannom_ime_NativeCore_learn(
+    env: *mut JNIEnv,
+    _: jclass,
+    handle: jlong,
+    keys: jstring,
+    text: jstring,
+    reading: jstring,
+) -> jboolean {
+    let (keys, text, reading) = (from_java(env, keys), from_java(env, text), from_java(env, reading));
+    let changed = guard(false, || engine(handle).learn(&keys, &text, &reading));
+    changed as jboolean
+}
+
 /// Xoá dữ liệu học: độ phổ biến về như từ điển mặc định `defaults`, cặp tự thêm về 0.
 #[no_mangle]
 pub unsafe extern "system" fn Java_com_hannom_ime_NativeCore_clearLearned(

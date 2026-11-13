@@ -111,7 +111,10 @@ Các nhóm:
   Chưa chọn gì thì thanh gợi ý và lưới có chữ một âm như khi gõ `n` (cả chữ n, ng, nh, ngh; `tphn` → cả chữ t,
   th, tr; `ph` → cả chữ p và ph). Cụm gõ tắt và câu ghép tự động vẫn giữ mỗi chữ cái là một phụ âm (`cn` không
   thành 𡨸喃 chữ nôm). Thứ tự gợi ý: cụm có sẵn trong từ điển khớp cả chuỗi, rồi chữ của âm đầu (`phn` → 拜
-  phải, 發 phát…); câu ghép tự động đứng sau 3 chữ đầu.
+  phải, 發 phát…); câu ghép tự động đứng sau 3 chữ đầu. Mỗi mảnh một chữ cái của câu ghép lấy chữ dùng nhiều
+  nhất (cả phụ âm dài hơn: `phn` → 拜河內 phải hà nội, không phải pi).
+- **Học cụm:** đưa ra cả cụm trong một lượt gõ (chọn từng phần `tphn` → 城, 舖, 河內, hay chọn câu ghép) thì cụm
+  được thêm / tăng trong từ điển, gõ tắt toàn phụ âm còn nhớ cả mã (`城舖河內;tphn`): lần sau gõ `tphn` cụm đứng đầu.
 
   Mã: `INITIAL_GROUPS` trong `core/src/engine.rs`. Chỉ người dùng đổi nhóm, không tự thêm bớt.
 - **`w` gõ một mình** là âm bắt đầu bằng ư (`w` → 央 ương, 約 ước…), cả trong gõ tắt: `tw` chọn tr ở cột,

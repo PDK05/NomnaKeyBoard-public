@@ -1392,8 +1392,19 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
             // Chọn phần đầu: chữ nằm lại trong khung gõ, chọn tiếp phần còn lại; chọn hết mới vào ô nhập.
             chosen.add(Chosen(c, keys.substring(0, keys.length - rest.length), rest))
         } else {
+            // Cả cụm của lượt gõ này (chọn từng phần `tphn` → 城, 舖, 河內, hay cụm ghép tự động): học để lần sau
+            // gõ đúng chuỗi phím ấy cụm đứng đầu.
+            val parts = chosen.map { it.candidate } + c
+            val whole = if (!secure && parts.none { it.literal } && (parts.size > 1 || c.joined)) {
+                Triple(
+                    chosen.joinToString("") { it.keys } + keys.substring(0, c.consumed.coerceAtMost(keys.length)),
+                    parts.joinToString("") { it.text },
+                    parts.joinToString(" ") { it.reading },
+                )
+            } else null
             ic.commitText(takeChosen(c.text, c.literal), 1)
             if (!secure && !c.literal) engine.select(c)
+            whole?.let { (k, text, reading) -> engine.learn(k, text, reading) }
         }
         keys.clear()
         keys.append(rest)

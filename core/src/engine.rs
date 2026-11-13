@@ -190,14 +190,9 @@ impl Engine {
                 continue;
             }
             let (pieces, abbr) = best[i].as_ref().map_or((0, 0), |b| (b.0, b.1));
-            // Mảnh đầu cũng giữ luật mỗi chữ cái một phụ âm (`cn` không ghép thành 𡨸喃 chữ nôm), dù gợi ý chữ một
-            // âm của âm đầu có cả phụ âm dài hơn ([`Self::prefixes`]).
-            let strict_first = |c: &Candidate| {
-                let seg: Vec<char> = chars[..c.consumed.min(n)].iter().map(|&c| text::lower(c)).collect();
-                let syl = letters_of(c.reading.split(' ').next().unwrap_or(""));
-                c.reading.contains(' ') || single_initial(&seg, &syl, true)
-            };
-            let here = if i == 0 { first.iter().filter(|c| !run || strict_first(c)).cloned().collect() } else { self.ranked_in(&chars[i..].iter().collect::<String>(), run) };
+            // Mảnh một chữ cái lấy chữ dùng nhiều nhất của âm đó, cả phụ âm dài hơn (`phn`: phải, phố trước pi;
+            // người dùng muốn 2026-11-14); mảnh là cụm gõ tắt vẫn giữ mỗi chữ cái một phụ âm.
+            let here = if i == 0 { first.to_vec() } else { self.ranked_in(&chars[i..].iter().collect::<String>(), run) };
             let mut lengths = HashSet::new();
             // Đã xếp hạng: gợi ý đầu tiên của mỗi độ dài là tốt nhất.
             for c in here.into_iter().filter(|c| c.consumed > 0 && lengths.insert(c.consumed)) {
@@ -242,7 +237,7 @@ impl Engine {
     /// Chữ một âm tiết gõ dở ở đầu chuỗi phím (`h` → 漢, 𠄩…, `ng` → 𠊛, 𣈜…), xếp sau chữ gõ đủ.
     /// Đoạn gõ dở kéo dài chừng nào còn là phần đầu hợp lệ của một âm tiết (như tách pinyin):
     /// `mhb` là m + h + b, còn `quan` là một đoạn, không tách `qua`. Đoạn đã gõ dấu là chữ đủ, bỏ qua.
-    fn prefixes(&self, keys: &str, strict: bool, piece: bool, seen: &mut HashSet<(String, usize, String)>, found: &mut Vec<(Candidate, u32, Rank)>) {
+    fn prefixes(&self, keys: &str, strict: bool, seen: &mut HashSet<(String, usize, String)>, found: &mut Vec<(Candidate, u32, Rank)>) {
         let chars: Vec<char> = keys.chars().collect();
         let lead = chars.iter().take_while(|&&c| c == '\'').count();
         let mut chunk = None;
@@ -273,16 +268,10 @@ impl Engine {
         }
         let typed = letters_of(&composed);
         let folded = text::fold_key(&composed.to_lowercase());
-        // Trong chuỗi phụ âm liền nhau, đoạn toàn phụ âm phải đúng phụ âm đầu của âm (`n` không lấy nhân). Riêng
-        // chữ một âm của âm đầu chuỗi thì như khi chỉ gõ chữ cái đó (`t…` có cả chữ t, th, tr; người dùng muốn
-        // 2026-11-14); mảnh giữa chuỗi khi ghép câu (`piece`) và cụm nhiều chữ (dưới) vẫn giữ luật.
-        let initial_ok = |reading: &str| {
-            let first = letters_of(reading.split(' ').next().unwrap_or(""));
-            !piece || single_initial(&typed, &first, strict)
-        };
+        // Chữ một âm thì như khi chỉ gõ chữ cái đó (`t…` có cả chữ t, th, tr), kể cả mảnh giữa chuỗi khi ghép câu
+        // (người dùng muốn 2026-11-14); cụm nhiều chữ (dưới) vẫn giữ mỗi chữ cái một phụ âm.
         for (order, e) in self.dict.lookup_prefix(&folded) {
             if !prefix_matches(&typed, &letters_of(&e.reading))
-                || !initial_ok(&e.reading)
                 || !seen.insert((e.text.clone(), consumed, e.reading.clone()))
             {
                 continue;
@@ -369,7 +358,7 @@ impl Engine {
                 }
             }
         }
-        self.prefixes(keys, strict, run, &mut seen, &mut found);
+        self.prefixes(keys, strict, &mut seen, &mut found);
         if self.options.telex && !initials_only {
             // Mỗi gợi ý phải dừng đúng ở phím cách hoặc cuối chuỗi: `quoocsvieetj` không tách thành quốc + việt.
             // Riêng chữ gõ dở ở đầu ([`Self::prefixes`]: đoạn đầu chưa thành chữ, `g` của `greenwich` → 家 gia)
@@ -1150,6 +1139,34 @@ impl Engine {
         self.options.learning && self.dict.bump(&cand.text, &cand.reading)
     }
 
+    /// Ghi nhận người dùng đã đưa ra cụm `text` (âm `reading`) cho chuỗi phím `keys`, kể cả cụm ghép tự động hay
+    /// chọn từng phần (`tphn` → 城 + 舖 + 河內): cụm chưa có thì thêm vào từ điển; gõ tắt toàn phụ âm thì nhớ cả
+    /// mã gõ tắt đó (`城舖河內;tphn`), để lần sau gõ đúng chuỗi ấy cụm đứng đầu. Trả `true` nếu từ điển đổi.
+    pub fn learn(&mut self, keys: &str, text: &str, reading: &str) -> bool {
+        if !self.options.learning {
+            return false;
+        }
+        let syllables = reading.split(' ').count();
+        if syllables < 2 || syllables != text.chars().count() {
+            return self.dict.bump(text, reading);
+        }
+        let step = self.dict.step();
+        let mut changed = false;
+        let mut remember = |dict: &mut Dictionary, reading: &str| {
+            if dict.bump(text, reading) {
+                changed = true;
+            } else if let Ok(entry) = dict::Entry::new(text, reading) {
+                changed |= dict.put(None, entry, step);
+            }
+        };
+        remember(&mut self.dict, reading);
+        let code = self.shortcut_code(keys);
+        if self.options.telex && is_initials_only(keys) && dict::is_shortcut(&code) && code.chars().count() <= MAX_ABBREVIATION {
+            remember(&mut self.dict, &code);
+        }
+        changed
+    }
+
     /// Từ điển cho màn hình quản lý: mỗi cặp chữ – âm một dòng kèm độ phổ biến, xếp a → z như tệp lưu.
     /// `query` khớp chữ, âm đọc (nguyên âm tiết, xem [`text::reading_has`]) hoặc mã Unicode (`U+56FA`); rỗng thì lấy hết.
     pub fn rows(&self, query: &str) -> Vec<Row> {
@@ -1565,9 +1582,10 @@ mod tests {
         assert_eq!(texts(&e.candidates("chuwx'n"))[0], "𡨸喃");
         // Toàn phụ âm là gõ tắt, mỗi chữ cái một phụ âm đơn, đúng phụ âm đó: không tự gộp sang phụ âm dài hơn
         // (`cn` không phải chữ nôm), không gộp hai chữ cái thành phụ âm đôi (`chn` là c + h + n).
-        // Riêng chữ một âm của âm đầu thì như khi chỉ gõ `c` (có cả 𡨸 chữ), chỉ cụm là không.
+        // Riêng chữ một âm thì như khi chỉ gõ `c` (có cả 𡨸 chữ), nên câu ghép tự động có thể ra 𡨸喃 (người dùng
+        // muốn 2026-11-14); cụm có sẵn trong từ điển thì không khớp.
         for keys in ["cn", "chn"] {
-            assert!(e.candidates(keys).iter().all(|c| c.text != "𡨸喃"), "{keys}: {:?}", texts(&e.candidates(keys)));
+            assert!(e.candidates(keys).iter().all(|c| c.text != "𡨸喃" || c.joined), "{keys}: {:?}", texts(&e.candidates(keys)));
         }
         assert!(texts(&e.candidates("cn")).contains(&"𡨸"));
         // Đã chọn 漢: 喃 của 漢喃 phải lấy trọn chữ tới phím cách, không chỉ mỗi `n` (ra 喃om).
@@ -2004,6 +2022,20 @@ mod tests {
         let d = e.candidates_narrowed("ddn", &[(Part::Initial, "d".to_string())]);
         assert_eq!(texts(&d), ["民"]);
         assert_eq!(d[0].consumed, 2);
+    }
+
+    #[test]
+    fn initials_run_joins_common_words_and_learns() {
+        // `phn`: câu ghép lấy chữ dùng nhiều của p (cả ph: phố) chứ không chỉ chữ đúng p (pi).
+        let mut e = Engine::new(Dictionary::from_text("𪪈;pi;0\n舖;phố;9\n城;thành;9\n河內;hà nội;9\n漢喃;hán nôm;1\n").0);
+        e.options.telex = true;
+        let cands = e.candidates("phn");
+        let joined: Vec<&str> = cands.iter().filter(|c| c.joined).map(|c| c.text.as_str()).collect();
+        assert_eq!(joined, ["舖河內"]);
+        // Chọn 城舖河內 (từng phần hay cả cụm) cho `tphn`: lần sau cụm đó đứng đầu.
+        assert!(e.learn("tphn", "城舖河內", "thành phố hà nội"));
+        assert_eq!(e.candidates("tphn")[0].text, "城舖河內");
+        assert!(e.dict.freq_of("城舖河內", "thành phố hà nội").is_some());
     }
 
     #[test]

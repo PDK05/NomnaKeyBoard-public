@@ -636,7 +636,11 @@ class KeyboardView(context: Context, private val listener: Listener, private val
         // Bàn phím số không có bóng phím (như Gboard), phím chỉ sáng lên khi nhấn.
         if (k.type == KeyType.CHAR && !numberPage) overlay.showPreview(overlayRect(k), label(k), more = popupOf(k) != null)
         when (k.type) {
-            KeyType.DELETE -> handler.postDelayed(repeatDelete, 300)
+            KeyType.DELETE -> {
+                // Xoá ngay khi chạm xuống (như Gboard), không đợi nhấc tay; vuốt sang trái sau đó thì xoá nốt cả từ.
+                listener.onDelete()
+                handler.postDelayed(repeatDelete, 300)
+            }
             KeyType.CHAR -> handler.postDelayed(longPress, 350)
             KeyType.MODE -> handler.postDelayed(longPress, 400)
             KeyType.SHIFT -> {
@@ -674,8 +678,9 @@ class KeyboardView(context: Context, private val listener: Listener, private val
         }
         when (k.type) {
             KeyType.SPACE -> {
-                val step = context.dp(14f)
-                if (!spaceDragging && abs(x - downX) > context.dp(12f)) {
+                // Mỗi chỗ dừng của con trỏ ứng với chừng này px vuốt; bắt đầu vuốt khi đã dời quá [SPACE_DRAG_START].
+                val step = context.dp(SPACE_DRAG_STEP)
+                if (!spaceDragging && abs(x - downX) > context.dp(SPACE_DRAG_START)) {
                     spaceDragging = true
                     cursorAnchorX = x
                 }
@@ -717,7 +722,7 @@ class KeyboardView(context: Context, private val listener: Listener, private val
                 if (shift == Shift.ONCE) shift = Shift.OFF
             }
         } else if (commit && !longPressed && !repeating && !spaceDragging && !railDragging && k.type != KeyType.SHIFT) {
-            if (deleteWordArmed) listener.onDeleteWord() else perform(k)
+            if (deleteWordArmed) listener.onDeleteWord() else if (k.type != KeyType.DELETE) perform(k)
         }
         railDragging = false
         invalidate()
@@ -822,6 +827,9 @@ class KeyboardView(context: Context, private val listener: Listener, private val
     }
 
     companion object {
+        /** Vuốt phím cách: dp vuốt cho mỗi bước con trỏ (trước là 14), và dp phải dời trước khi bắt đầu vuốt (trước là 12). */
+        const val SPACE_DRAG_STEP = 10f
+        const val SPACE_DRAG_START = 8f
         /** Chiều cao hàng (dp) mà cỡ chữ trên phím lấy làm chuẩn (mức "Vừa"). */
         const val TEXT_ROW_DP = 50f
         /** Giữ phím xoá: khoảng chờ giữa hai lần xoá lúc đầu và nhanh nhất (ms), mỗi lần nhân thêm hệ số. */

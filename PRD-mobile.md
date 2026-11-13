@@ -65,6 +65,10 @@ giữ hàng trên → số 1–0.
 - Telex rút gọn: gõ chữ gốc (`nom`), gợi ý hiện các dạng có dấu / chữ Hán Nôm khớp.
 - Hán Nôm gõ âm đọc bằng Telex tự do như Quốc ngữ: phím cách một lần là tách chữ (khung gõ hiện dấu cách),
 lần nữa mới chọn gợi ý đầu; không có gợi ý thì chốt chữ Quốc ngữ đang gõ. Quốc ngữ: phím cách chốt từ.
+- Gõ tắt toàn phụ âm (Hán Nôm, Telex): nhiều phụ âm liền nhau không dấu cách thì mỗi chữ cái là một phụ âm
+đơn, đúng phụ âm đó: không tự gộp sang phụ âm dài hơn (`bndtp`: n là n, không phải nh; p không phải ph) và
+không gộp hai chữ cái thành phụ âm đôi (`nh` là n + h, `ch` là c + h). Riêng `q` (không tự là phụ âm đầu) là
+qu; `dd` là đ. Một phụ âm đứng một mình (`n`) vẫn gợi ý mọi âm bắt đầu bằng nó.
 - Ứng dụng đổi ô nhập hoặc con trỏ nhảy chỗ khác: chốt nguyên chuỗi đang gõ, không mất chữ.
 - Ô nhập mật khẩu: tự chuyển chế độ Tiếng Anh, không lưu, không học.
 
@@ -84,6 +88,34 @@ không tính vào số ô (5 cụm 2 chữ vẫn đủ 5 ô), chỉ chiếm thê
 không chạm viền trên dưới.
 - Nút mũi tên ở cuối dải mở **bảng mở rộng** dạng lưới, chiếm chỗ bàn phím, cuộn dọc; chỉ hiện các
 gợi ý chưa có trên thanh.
+- **Cột chọn nhanh** (bên trái bảng mở rộng) thu hẹp âm tiết đầu từng cấp: phụ âm đầu → nguyên âm → vần →
+phụ âm cuối → thanh. Đầu cột có sẵn mục đúng âm đã gõ (gõ `tôi` thì có `tôi`). Vần luôn được hỏi; vần không thể
+có phụ âm cuối (vần đôi ôi, ai, âu…) thì khỏi hỏi phụ âm cuối (t → ô → ôi → thanh). Các thanh luôn xếp theo thứ tự cố định: ngang, huyền, sắc,
+hỏi, ngã, nặng (ma, mà, má, mả, mã, mạ). Đã chọn một âm (kể cả mục chọn nhanh) thì cột vẫn hiện các thanh
+khác của chính âm đó để đổi.
+- **Nhóm phụ âm đầu** (do người dùng đặt): có một phụ âm trong nhóm xuất hiện ở cột chọn nhanh thì hiện cả
+các phụ âm cùng nhóm, nhưng tự ẩn phụ âm nào ghép vào không ra chữ nào cho gọn (gõ `cũng`: có gũng nên hiện g,
+không có kũng nên ẩn k; chỉ gõ phụ âm đầu thì ẩn phụ âm không có âm nào trong từ điển); phụ âm đã gõ đứng đầu.
+Các nhóm:
+  - b / m / v / l / n / p / ph / d / gi / r / đ / t / th
+  - c / k / qu / g / gh
+  - ch / tr
+  - ng / ngh
+  - s / x
+  - h, kh, nh đứng riêng.
+
+  Đổi qu sang phụ âm khác thì bỏ u, vì chỉ qu mới có u (`quá` → cá, ká, gá, ghá); đổi sang qu thì thêm u.
+
+  Gõ tắt toàn phụ âm (`ndtphn`): âm tiết đầu là chữ cái đầu (n), nên cột hỏi như khi chỉ gõ `n`: n, rồi các
+  phụ âm dài hơn bắt đầu bằng nó (ng, nh, ngh), rồi phụ âm cùng nhóm; chọn phụ âm nào cũng ra chữ của phụ âm đó.
+  Chưa chọn gì thì thanh gợi ý và lưới có chữ một âm như khi gõ `n` (cả chữ n, ng, nh, ngh; `tphn` → cả chữ t,
+  th, tr; `ph` → cả chữ p và ph). Cụm gõ tắt và câu ghép tự động vẫn giữ mỗi chữ cái là một phụ âm (`cn` không
+  thành 𡨸喃 chữ nôm). Thứ tự gợi ý: cụm có sẵn trong từ điển khớp cả chuỗi, rồi chữ của âm đầu (`phn` → 拜
+  phải, 發 phát…); câu ghép tự động đứng sau 3 chữ đầu.
+
+  Mã: `INITIAL_GROUPS` trong `core/src/engine.rs`. Chỉ người dùng đổi nhóm, không tự thêm bớt.
+- **`w` gõ một mình** là âm bắt đầu bằng ư (`w` → 央 ương, 約 ước…), cả trong gõ tắt: `tw` chọn tr ở cột,
+chọn 中 thì `w` còn lại gợi ý 央 (trung ương).
 - Gợi ý ghép tự động không giới hạn độ dài, kể cả cụm lặp một chữ (`nomnomnom…` → 喃喃喃…);
 dài trên 11 chữ thì một mình nó trên thanh gợi ý.
 - Khung gõ (pinyin) một dòng, dài quá thì ẩn phần đầu. Chuỗi phím đang gõ tối đa 80 phím, quá thì

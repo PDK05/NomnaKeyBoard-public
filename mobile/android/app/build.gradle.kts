@@ -16,8 +16,8 @@ android {
         applicationId = "com.hannom.ime"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.1.5"
+        versionCode = 7
+        versionName = "0.1.6"
         ndk {
             abiFilters += rustTargets.keys
         }
@@ -26,6 +26,9 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Ký bằng khoá debug như bản thử trước đây: cài đè lên bản đang dùng, không mất từ điển / dữ liệu đã học.
+            // Bản release không debuggable nên ART biên dịch mã sẵn, khởi động nhanh hơn nhiều.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

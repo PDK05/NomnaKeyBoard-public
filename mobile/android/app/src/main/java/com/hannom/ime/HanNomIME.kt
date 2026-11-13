@@ -111,6 +111,8 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         const val QUOC_NGU_AT = 8
         /** Chuỗi phím Hán Nôm dài tới chừng này thì tra gợi ý ngay (vài ms); dài hơn thì tra ở luồng nền. */
         const val SYNC_KEYS = 24
+        /** Dấu thanh tiếng Việt (dạng tách NFD): huyền, sắc, ngã, hỏi, nặng. */
+        val TONE_MARKS = Regex("[̣̀́̃̉]")
     }
 
     private val hanNomPunctuation = mapOf(
@@ -161,6 +163,9 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
             it.fullscreen = isFullscreenMode
             it.grid.narrow = { picked -> if (keys.isEmpty()) null else engine.narrow(keys.toString(), picked) }
             it.grid.narrowed = { picked -> engine.candidatesNarrowed(keys.toString(), picked) }
+            it.grid.typedSyllable = {
+                if (keys.isEmpty()) null else hanNomComposing().trim().substringBefore(' ').lowercase().ifEmpty { null }
+            }
             // Gần như chữ nào cũng có chữ khác dấu để thu hẹp tới: luôn mở được bảng (khỏi tính cột trái mỗi phím).
             it.bar.canNarrow = { !handwriting }
             // Gợi ý từ tiếp theo (chưa gõ gì) viết hoa theo Shift / Caps Lock: bấm Shift thì đổi ngay.
@@ -462,6 +467,14 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
                 it.textEdit.hasText = newSelStart != newSelEnd || fieldHasText()
             }
         }
+        // Khung gõ Hán Nôm đang hiện mà người dùng chạm / giữ trong ô nhập (vùng chọn khác lúc mở khung gõ): dừng gõ.
+        val anchor = composeAnchor
+        if (appSelectionUiDismissed && keys.isNotEmpty() && effectiveMode == Mode.HAN_NOM && anchor != null &&
+            (newSelStart != anchor.first || newSelEnd != anchor.second)
+        ) {
+            stopComposing(anchor, newSelStart, newSelEnd)
+            return
+        }
         // Quốc ngữ gõ thẳng vào ô nhập: con trỏ nhảy ra khỏi chữ đang gõ (chạm chỗ khác) thì giữ nguyên chữ,
         // gõ tiếp là từ mới. Hán Nôm gõ trong khung gõ riêng nên không bị ảnh hưởng.
         if (keys.isNotEmpty() && direct && (newSelStart != newSelEnd || !typedIntact())) {
@@ -687,13 +700,21 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         }
     }
 
+    /** Khung gõ đang hiện thêm dấu cách cuối chuỗi chưa gõ (xem [showLookup]). */
+    private var trailingSpace = false
+
     /** Khung gõ và thanh gợi ý Hán Nôm theo [candidates] (khung gõ tách chữ theo gợi ý đầu). */
     private fun showLookup(r: InputRoot) {
         // Phần chưa chọn hiện bằng Quốc ngữ: sau chữ Latin đã chọn thì cách ra như khi chốt nguyên văn.
         val done = chosenText
-        val text = done + afterChosen(hanNomComposing(), latin = true)
+        val body = afterChosen(hanNomComposing(), latin = true)
         val caret = snapCaret()
-        r.setComposing(text, chosen = done.length, caret = text.length - hanNomComposing().length + caret)
+        val at = done.length + body.length - hanNomComposing().length + caret
+        // Telex: dấu cách cuối chuỗi (tô đỏ) luôn hiện sẵn sau cùng, con trỏ không bao giờ ra sau nó; ấn cách thì
+        // dấu cách thường hiện ở con trỏ, trước dấu cách đỏ (`tô|␣` → `tô |␣`).
+        trailingSpace = telex
+        val text = done + body + if (trailingSpace) " " else ""
+        r.setComposing(text, chosen = done.length, caret = at)
         r.keyboard.spaceLabel = effectiveMode.spaceLabel
         r.keyboard.invalidate()
         r.bar.showCandidates(candidates, null)
@@ -743,6 +764,12 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
             return
         }
         if (keys.isEmpty()) {
+            if (appSelectionUiDismissed) {
+                appSelectionUiDismissed = false
+                composeAnchor = null
+                // Khung gõ đóng: con trỏ của ô nhập hiện lại (đang tìm emoji thì ô tìm vẫn giữ việc này).
+                if (r.emojiSearch.active != true) appConsumesInput(false)
+            }
             if (direct) showTyped("")
             r.setComposing("")
             // Cài đặt có thể vừa đổi trong ứng dụng khi bàn phím đang mở.
@@ -760,6 +787,10 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
             return
         }
         // Hán Nôm: chữ đang gõ chỉ hiện trong khung gõ, chọn xong mới vào ô nhập (như pinyin).
+        if (!appSelectionUiDismissed) {
+            dismissAppSelectionUi()
+            appSelectionUiDismissed = true
+        }
         if (candidatesFor != hanNomState) {
             if (keys.length <= SYNC_KEYS) {
                 lookupGen++
@@ -771,6 +802,59 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         }
         // Đang tra ở luồng nền: khung gõ hiện ngay, thanh gợi ý giữ gợi ý cũ tới khi có kết quả.
         showLookup(r)
+    }
+
+    /** Đã ẩn giọt nước con trỏ / hộp "Dán" của ứng dụng cho lần gõ Hán Nôm này (xem [dismissAppSelectionUi]). */
+    private var appSelectionUiDismissed = false
+    /**
+     * Vùng chọn (đầu, cuối) của ô nhập lúc khung gõ mở: khi khung gõ đang hiện, bàn phím không sửa gì trong ô nhập (chọn
+     * hết mới đưa chữ vào), nên vùng chọn đổi khác chỗ này là người dùng chạm / giữ trong ô nhập. `null`: không đọc được.
+     */
+    private var composeAnchor: Pair<Int, Int>? = null
+
+    /**
+     * Giọt nước con trỏ và hộp "Dán / Tự động điền" của ô nhập là cửa sổ nổi của ứng dụng, hệ thống xếp trên cửa sổ bàn
+     * phím nên đè lên khung gõ (đo trên Realme, Tin nhắn). Ô nhập tự ẩn chúng khi chữ trong ô đổi, nhưng chữ Hán Nôm
+     * đang gõ chỉ nằm trong khung gõ: chèn rồi xoá một chữ tạm trong một lần sửa để ô nhập ẩn chúng, chữ trong ô
+     * không đổi. Ô nhập đang có vùng chọn thì không làm (chữ tạm sẽ thay mất đoạn đang chọn).
+     */
+    private fun dismissAppSelectionUi() {
+        composeAnchor = null
+        if (root?.emojiSearch?.active == true) return
+        val ic = appConnection ?: return
+        val et = ic.getExtractedText(android.view.inputmethod.ExtractedTextRequest(), 0)
+        val anchor = et?.let { it.startOffset + it.selectionStart to it.startOffset + it.selectionEnd }
+        composeAnchor = anchor
+        // Con trỏ của ô nhập cũng ẩn khi khung gõ đang hiện (khung gõ có con trỏ riêng), như lúc tìm emoji.
+        appConsumesInput(true)
+        if (anchor == null || anchor.first != anchor.second) return
+        ic.beginBatchEdit()
+        ic.setComposingText(" ", 1)
+        ic.setComposingText("", 1)
+        ic.finishComposingText()
+        ic.endBatchEdit()
+    }
+
+    /**
+     * Người dùng chạm / giữ trong ô nhập khi khung gõ đang hiện: dừng gõ ngay. Chỉ các chữ đã chọn dở trong khung gõ vào
+     * đúng chỗ đang gõ trước đó [anchor]; phần Quốc ngữ chưa chọn bỏ đi, không đưa chữ Latin vào ô nhập. Vùng chọn /
+     * con trỏ mới của người dùng giữ nguyên (dời theo chữ vừa thêm), không thay mất đoạn người dùng vừa chọn.
+     */
+    private fun stopComposing(anchor: Pair<Int, Int>, newStart: Int, newEnd: Int) {
+        val ic = appConnection ?: return
+        val text = takeChosen("", latin = false)
+        keys.clear()
+        tail = 0
+        if (text.isNotEmpty()) {
+            val at = anchor.second
+            val shift = { p: Int -> if (p >= at) p + text.length else p }
+            ic.beginBatchEdit()
+            ic.setSelection(at, at)
+            ic.commitText(text, 1)
+            ic.setSelection(shift(newStart), shift(newEnd))
+            ic.endBatchEdit()
+        }
+        refresh()
     }
 
     /** Khung gõ Hán Nôm: không tự cách chữ, chỉ cách ở chỗ người dùng ấn phím cách (lưu là dấu tách `'`). */
@@ -804,9 +888,7 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
             var before = ""
             for (seg in k.split('\'')) {
                 val head = if (start == 0) "" else "$before "
-                for (j in 0..seg.length) {
-                    add(start + j, head + engine.displayTelex(seg.substring(0, j), settings.toneStyle).replace(" ", ""))
-                }
+                if (full.startsWith(head)) for ((d, j) in segmentStops(seg)) stops[head.length + d] = start + j
                 before = head + engine.displayTelex(seg, settings.toneStyle).replace(" ", "")
                 start += seg.length + 1
             }
@@ -815,6 +897,57 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         }
         stops[full.length] = k.length
         return stops.map { (shown, p) -> p to shown }
+    }
+
+    /**
+     * Chỗ dừng trong một đoạn Telex [seg] (giữa hai dấu tách): vị trí trong chữ đang hiện → số phím. Phím trước con trỏ
+     * hiện đúng phần đầu chữ, hay đúng nếu bỏ dấu thanh (`nguw|owif` là ngư|ời: dấu thanh gõ cuối nằm trên chữ sau
+     * con trỏ), để con trỏ dừng được ở từng ký tự.
+     */
+    private fun segmentStops(seg: String): Map<Int, Int> {
+        val shown = { s: String -> engine.displayTelex(s, settings.toneStyle).replace(" ", "") }
+        val whole = shown(seg)
+        val bare = untoned(whole)
+        val exact = HashMap<Int, Int>()
+        val loose = HashMap<Int, Int>()
+        for (j in 0..seg.length) {
+            val p = shown(seg.substring(0, j))
+            when {
+                whole.startsWith(p) -> exact[p.length] = j
+                bare.startsWith(untoned(p)) -> loose[p.length] = j
+            }
+        }
+        return loose + exact
+    }
+
+    private fun untoned(s: String): String = java.text.Normalizer.normalize(
+        java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD).replace(TONE_MARKS, ""),
+        java.text.Normalizer.Form.NFC,
+    )
+
+    /**
+     * Trước khi dời con trỏ: đoạn nào gõ theo thứ tự làm con trỏ không dừng được ở mọi ký tự (`nguoiwf`: w gõ sau
+     * đổi cả u lẫn o) thì đổi sang chuỗi phím chuẩn hiện y hệt (`nguwowif`). Chữ hiện không đổi, con trỏ giữ chỗ.
+     */
+    private fun canonicalizeForCaret() {
+        if (!telex) return
+        val k = keys.toString()
+        if (chosen.lastOrNull()?.rest == k) return
+        val next = k.split('\'').joinToString("'") { seg ->
+            if (seg.isEmpty() || seg.any { !it.isLetter() }) return@joinToString seg
+            val shown = engine.displayTelex(seg, settings.toneStyle)
+            if (shown.contains(' ') || segmentStops(seg).size > shown.length) return@joinToString seg
+            val canon = engine.decompose(shown)
+            val better = canon != seg && engine.displayTelex(canon, settings.toneStyle) == shown &&
+                segmentStops(canon).size > segmentStops(seg).size
+            if (better) canon else seg
+        }
+        if (next == k) return
+        val at = caretStops().lastOrNull { it.first <= caretAt }?.second ?: 0
+        keys.clear()
+        keys.append(next)
+        val stops = caretStops()
+        tail = keys.length - (stops.lastOrNull { it.second <= at } ?: stops.first()).first
     }
 
     /** Đưa con trỏ về chỗ dừng gần nhất phía sau (vừa gõ giữa một chữ thì con trỏ sang cuối chữ); trả vị trí hiện. */
@@ -830,8 +963,9 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
     private fun onComposeTap(offset: Int) {
         if (!caretMovable) return
         val r = root ?: return
+        canonicalizeForCaret()
         val body = hanNomComposing()
-        val start = r.composingText.length - body.length
+        val start = r.composingText.length - body.length - if (trailingSpace) 1 else 0
         val stops = caretStops()
         val at = offset - start
         val stop = stops.minByOrNull { kotlin.math.abs(it.second - at) } ?: return
@@ -842,6 +976,7 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
     /** Vuốt phím cách khi đang gõ Hán Nôm: dời con trỏ [delta] chỗ dừng. */
     private fun moveCaret(delta: Int) {
         val r = root ?: return
+        canonicalizeForCaret()
         val stops = caretStops()
         val i = stops.indexOfLast { it.first <= caretAt }.coerceAtLeast(0)
         tail = keys.length - stops[(i + delta).coerceIn(0, stops.lastIndex)].first
@@ -1530,10 +1665,12 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
             // Con trỏ giữa khung gõ: xoá phím trước con trỏ, phần sau giữ nguyên.
             val at = caretAt
             if (at == 0) {
-                // Ở đầu: gỡ chữ chọn dở cuối như khi chọn nhầm (con trỏ đứng sau đoạn phím trả lại).
+                // Ở đầu: gỡ chữ chọn dở cuối như khi chọn nhầm. Con trỏ nhảy về sau chữ đã chọn trước đó (để xoá
+                // tiếp được), hết chữ đã chọn thì về cuối chuỗi.
                 if (last == null) return
                 chosen.removeAt(chosen.lastIndex)
                 keys.insert(0, last.keys)
+                tail = if (chosen.isEmpty()) 0 else keys.length
             } else if (!editInWord { d, i -> if (i == 0) null else d.removeRange(i - 1, i) to i - 1 }) {
                 val start = keys.lastIndexOf('\'', at - 1) + 1
                 if (telex && start > 0 && engine.displayTelex(keys.substring(start, at), settings.toneStyle).isEmpty()) {
@@ -1547,6 +1684,7 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
                     keys.append(after)
                 }
             }
+            dropIfNoLetters()
             refresh()
             return
         }
@@ -1565,6 +1703,7 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
             }
             keys.clear()
             keys.append(next)
+            dropIfNoLetters()
             if (keys.isEmpty() && !direct) currentInputConnection?.commitText("", 1)
             refresh()
             return
@@ -1573,6 +1712,17 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         val selected = ic.getSelectedText(0)
         if (selected.isNullOrEmpty()) sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL) else ic.commitText("", 1)
         updateShift()
+    }
+
+    /**
+     * Khung gõ Hán Nôm xoá tới không còn chữ nào (chỉ còn dấu tách, không có chữ đã chọn dở): bỏ hết, thoát chế độ
+     * nhập (khung gõ đóng, như chưa gõ gì).
+     */
+    private fun dropIfNoLetters() {
+        if (direct || chosen.isNotEmpty() || keys.isEmpty() || keys.any { it != '\'' }) return
+        keys.clear()
+        tail = 0
+        currentInputConnection?.commitText("", 1)
     }
 
     override fun onDeleteWord() {
@@ -1639,11 +1789,11 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
             return
         }
         // Telex: cách một lần là tách chữ (dấu tách `'`, khung gõ hiện dấu cách); cách lần nữa mới chọn gợi ý đầu.
-        // Con trỏ giữa khung gõ thì tách ở con trỏ (không tách cạnh dấu tách có sẵn).
-        if (telex && effectiveMode == Mode.HAN_NOM && keys.getOrNull(caretAt - 1).let { it != null && it != '\'' } &&
-            keys.getOrNull(caretAt) != '\''
-        ) {
-            typeKeys("'")
+        // Chỉ chốt khi con trỏ ở cuối cụm và ngay trước nó đã là dấu cách (cách hai lần ở cuối). Con trỏ đã dời về trước
+        // (kể cả ngay trước dấu cách cuối cụm, hay cạnh dấu cách giữa cụm) thì phím cách luôn chèn dấu cách ở con trỏ.
+        // Con trỏ ở đầu cụm thì không chèn (dấu cách ở đầu không tách gì).
+        if (telex && effectiveMode == Mode.HAN_NOM && (caretAt < keys.length || keys.lastOrNull() != '\'')) {
+            if (caretAt > 0) typeKeys("'")
             return
         }
         when (effectiveMode) {
@@ -1707,9 +1857,13 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
     /**
      * Mở trang của ứng dụng từ bàn phím, ở cửa sổ (task) riêng: không chen vào cửa sổ Nôm Na đang chạy nền (mở từ
      * biểu tượng), để quay lại ở trang đầu là về đúng ứng dụng đang gõ (xem [EXTRA_FROM_KEYBOARD]).
+     *
+     * Mỗi trang chỉ một cửa sổ như vậy (tài liệu riêng, nhận ra theo [Intent.getData]): mở lại thì dùng lại cửa sổ
+     * cũ, mở trang mới từ đầu, không đẻ thêm cửa sổ trong danh sách gần đây (ra bằng nút Home thì cửa sổ còn lại).
      */
     private fun openActivity(intent: Intent) {
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+        intent.data = android.net.Uri.parse("nomna-keyboard:${intent.component?.className}")
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NEW_DOCUMENT or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         intent.putExtra(EXTRA_FROM_KEYBOARD, true)
         startActivity(intent)
         requestHideSelf(0)

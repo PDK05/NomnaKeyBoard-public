@@ -395,8 +395,14 @@ pub fn telex_words(keys: &str) -> Vec<String> {
             continue;
         }
         let trial = format!("{word}{c}");
+        // `w` đứng một mình là chữ ư của gõ tắt (`wdd` → w đ, ưu đãi): phụ âm sau nó mở chữ mới; phím dấu
+        // (`ws` ứ) thì vẫn ghép.
+        let lone_w = word.eq_ignore_ascii_case("w")
+            && c.is_ascii_alphabetic()
+            && !"aeiouywsfrxjzAEIOUYWSFRXJZ".contains(c)
+            && !telex_valid(&trial);
         // [`RAW`] (phím xoá đặt ở đầu chữ thô) luôn mở chữ mới.
-        if word.is_empty() || c != RAW && (telex_valid(&trial) || !telex_valid(&word)) {
+        if word.is_empty() || c != RAW && !lone_w && (telex_valid(&trial) || !telex_valid(&word)) {
             word = trial;
         } else {
             out.push(std::mem::replace(&mut word, c.to_string()));
@@ -1025,6 +1031,14 @@ mod tests {
 
     fn c(keys: &str) -> String {
         compose(keys, ToneStyle::Old)
+    }
+
+    #[test]
+    fn lone_w_then_consonant_starts_new_word() {
+        // Gõ tắt `wdd` (ưu đãi): `w` đứng riêng, `dd` vẫn là đ; phím dấu sau w (`ws`) vẫn ghép.
+        assert_eq!(display_telex("wdd", ToneStyle::Old), "w đ");
+        assert_eq!(display_telex("twdd", ToneStyle::Old), "t w đ");
+        assert_eq!(telex_words("ws"), ["ws"]);
     }
 
     #[test]

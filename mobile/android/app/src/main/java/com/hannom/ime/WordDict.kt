@@ -225,11 +225,16 @@ class WordDict private constructor(private val context: Context, private val nam
             else -> word
         }
 
-        private val cache = HashMap<String, WordDict>()
+        /**
+         * Mỗi từ điển nạp một lần, khoá riêng: luồng chính cần từ điển tiếng Việt không phải chờ luồng nền nạp xong
+         * từ điển tiếng Anh (lớn gấp mười).
+         */
+        private val cache = java.util.concurrent.ConcurrentHashMap<String, Lazy<WordDict>>()
 
-        @Synchronized
-        fun get(context: Context, name: String): WordDict =
-            cache.getOrPut(name) { WordDict(context.applicationContext, name) }
+        fun get(context: Context, name: String): WordDict {
+            val app = context.applicationContext
+            return cache.computeIfAbsent(name) { lazy { WordDict(app, name) } }.value
+        }
 
         /** Nạp sẵn các từ điển ở luồng nền (tiếng Anh hơn trăm nghìn từ), lần gõ đầu khỏi khựng. */
         fun preload(context: Context) {
@@ -238,7 +243,6 @@ class WordDict private constructor(private val context: Context, private val nam
         }
 
         /** Lưu số lần dùng đã học của các từ điển đã mở (gọi khi đóng bàn phím). */
-        @Synchronized
-        fun saveAll() = cache.values.forEach { it.save() }
+        fun saveAll() = cache.values.filter { it.isInitialized() }.forEach { it.value.save() }
     }
 }

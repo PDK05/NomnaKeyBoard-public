@@ -542,6 +542,8 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
      */
     var narrow: (List<Pair<Int, String>>) -> Pair<Int, List<String>>? = { null }
     var narrowed: (List<Pair<Int, String>>) -> List<Candidate> = { emptyList() }
+    /** Âm đủ (có thanh, chữ thường) của chữ đầu đang gõ, như khung gõ hiện (`tooi` → tôi); `null` nếu chưa có. */
+    var typedSyllable: () -> String? = { null }
     var onDelete: () -> Unit = {}
     var onEnter: () -> Unit = {}
 
@@ -600,7 +602,10 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
     private val picked = ArrayList<Pair<Int, String>>()
     /** Cấp kế tiếp và các lựa chọn của nó. */
     private var level: Pair<Int, List<String>>? = null
+    /** Nút 𡨸單 là công tắc: bật thì giữ khi gõ tiếp, xoá, chọn chữ… tới khi người dùng tắt, hay khung gõ (pinyin) tắt. */
     private var single = false
+    /** Lần dựng cột trái kế tiếp giữ nguyên chỗ đang cuộn (xem [pick]). */
+    private var keepFilterScroll = false
     private var rowHeight = context.dpi(52)
     private val columnLine = View(context)
     private val leftColumn = LinearLayout(context).apply { orientation = VERTICAL }
@@ -632,11 +637,15 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
         }, LayoutParams(context.dpi(72), LayoutParams.MATCH_PARENT))
     }
 
+    /** Khung gõ (pinyin) đã tắt: tắt nút 𡨸單. */
+    fun endComposing() {
+        single = false
+    }
+
     /** [all]: mọi gợi ý; [hidden]: các gợi ý chưa có trên thanh (bảng hiện các gợi ý này khi không lọc). */
     fun show(all: List<Candidate>, hidden: List<Candidate>, keys: String) {
         if (keys != this.keys) {
             picked.clear()
-            single = false
             // Xoá chữ vừa chọn trong lưới (chuỗi phím trở lại như trước khi chọn): trở lại đúng các bước thu
             // hẹp lúc chọn nó, không phải thu hẹp lại từ đầu.
             val back = history.lastOrNull()
@@ -655,7 +664,14 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
     }
 
     private fun pick(choice: Pair<Int, String>?) {
-        if (choice == null) picked.removeAt(picked.lastIndex) else picked.add(choice)
+        when {
+            choice == null -> picked.removeAt(picked.lastIndex)
+            // Đã chọn cả âm: chạm thanh khác của nó thì đổi, không chồng thêm lựa chọn.
+            choice.first == PART_SYLLABLE && picked.lastOrNull()?.first == PART_SYLLABLE -> picked[picked.lastIndex] = choice
+            else -> picked.add(choice)
+        }
+        // Chọn thanh: cột vẫn là các thanh của âm đó, giữ chỗ đang cuộn tới (vuốt xuống chọn tối không bị nhảy lên).
+        keepFilterScroll = choice?.first == PART_SYLLABLE
         level = narrow(picked)
         render()
     }
@@ -692,8 +708,10 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
             setColor(singleColor)
         }
 
+        // Gợi ý đã có trên thanh thì lưới không hiện lại.
+        val onBar = (all.map { it.text } - hidden.map { it.text }.toSet()).toSet()
         val source = when {
-            picked.isNotEmpty() -> narrowed(picked)
+            picked.isNotEmpty() -> narrowed(picked).filter { it.text !in onBar }
             single -> all
             // Thanh đã hiện hết (mở bảng chỉ để thu hẹp): lưới để trống, không lặp lại gợi ý trên thanh. Riêng khi
             // cột trái cũng không có gì để chọn thì vẫn hiện, khỏi ra bảng trắng.
@@ -752,8 +770,10 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
     }
 
     private fun renderFilters() {
+        val keepY = filterScroll.scrollY.takeIf { keepFilterScroll }
+        keepFilterScroll = false
         filterColumn.removeAllViews()
-        filterScroll.scrollTo(0, 0)
+        if (keepY == null) filterScroll.scrollTo(0, 0) else filterScroll.post { filterScroll.scrollTo(0, keepY) }
         fun item(label: String, color: Int, size: Float, onClick: (() -> Unit)?) = TextView(context).apply {
             text = label
             gravity = Gravity.CENTER
@@ -775,10 +795,31 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
                     .apply { setLayerInset(0, context.dpi(60), context.dpi(14), 0, context.dpi(14)) }
             }, LayoutParams(LayoutParams.MATCH_PARENT, rowHeight))
         }
+        // Chọn nhanh đúng âm đã gõ (gõ tôi thì có sẵn mục tôi), khỏi chọn từng cấp phụ âm, vần, thanh.
+        var quick: String? = null
+        if (picked.isEmpty() && level?.first != PART_SYLLABLE) {
+            val syllable = typedSyllable()
+            if (!syllable.isNullOrEmpty() && narrowed(listOf(PART_SYLLABLE to syllable)).isNotEmpty()) {
+                quick = syllable
+                filterColumn.addView(item(syllable, theme.text, 17f) { pick(PART_SYLLABLE to syllable) }.apply {
+                    ellipsize = null
+                    setAutoSizeTextTypeUniformWithConfiguration(9, 17, 1, TypedValue.COMPLEX_UNIT_SP)
+                    contentDescription = "Âm $syllable"
+                }, LayoutParams(LayoutParams.MATCH_PARENT, rowHeight))
+            }
+        }
         val (part, options) = level ?: return
+        // Đã chọn cả âm: các lựa chọn là thanh khác của chính âm đó, âm đang chọn tô màu nhấn.
+        val current = picked.lastOrNull()?.takeIf { it.first == PART_SYLLABLE }?.second
         for (option in options) {
+            // Âm không có phụ âm đầu (yêu): vần trùng nhãn với mục chọn nhanh ở trên thì khỏi hiện lại; chọn
+            // nhanh vẫn đổi được thanh.
+            if (option == quick) continue
+            // Âm đang chọn đã hiện ở nút quay lại phía trên ("‹ nào"): chỉ hiện các thanh khác.
+            if (option == current) continue
             // Chỉ phần đang hỏi (qu → ô → ô → c), không ghép cả cụm; phụ âm đầu / cuối rỗng hiện "–".
-            filterColumn.addView(item(option.ifEmpty { "–" }, theme.text, 17f) { pick(part to option) }.apply {
+            val color = if (option == current) theme.accent else theme.text
+            filterColumn.addView(item(option.ifEmpty { "–" }, color, 17f) { pick(part to option) }.apply {
                 contentDescription = "${PART_NAMES.getOrElse(part) { "" }} ${option.ifEmpty { "không có" }}"
             }, LayoutParams(LayoutParams.MATCH_PARENT, rowHeight))
         }
@@ -830,14 +871,26 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
     /** Số ô (trên [UNITS] ô một hàng) của một gợi ý: chữ đơn 1, từ kép 2, cụm 3–4 chữ 3, dài hơn cả hàng. */
     private fun units(text: String): Int {
         val han = hanLength(text)
-        return when {
+        val base = when {
             han == 0 -> ((text.length + 3) / 4).coerceIn(1, UNITS)
             han == 1 -> 1
             han == 2 -> 2
             han <= 4 -> 3
             else -> UNITS
         }
+        // Đo bề rộng thật (chữ Latin có dấu, chữ to…): ước theo số ký tự hay thiếu, ô bị cắt còn "u…".
+        val gridWidth = pageScroll.width.takeIf { it > 0 }
+            ?: (resources.displayMetrics.widthPixels - context.dpi(64 + 1 + 72))
+        val unit = gridWidth / UNITS.toFloat()
+        if (unit <= 0f) return base
+        measurePaint.textSize = TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_SP, if (han > 0) 22f else 18f, resources.displayMetrics,
+        )
+        val need = android.text.Layout.getDesiredWidth(context.hanNomText(text), measurePaint) + context.dpi(12)
+        return maxOf(base, kotlin.math.ceil(need / unit).toInt()).coerceAtMost(UNITS)
     }
+
+    private val measurePaint by lazy { android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG) }
 
     private fun hanLength(text: String) = text.codePoints().filter { it >= 0x2E80 }.count().toInt()
 
@@ -935,9 +988,8 @@ class InputRoot(
     private val composing = ComposingView(context).apply {
         gravity = Gravity.CENTER_VERTICAL
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-        // Một dòng; dài quá bề rộng thì ẩn phần đầu, luôn thấy chữ đang gõ ở cuối.
+        // Một dòng; dài quá bề rộng thì [ComposingView.show] chỉ hiện đoạn có con trỏ (cuộn theo con trỏ).
         isSingleLine = true
-        ellipsize = android.text.TextUtils.TruncateAt.START
         setPadding(context.dpi(12), 0, context.dpi(12), 0)
         visibility = View.INVISIBLE
     }
@@ -1479,7 +1531,7 @@ class InputRoot(
     }
 
     /** Chữ đang hiện trong khung gõ. */
-    val composingText: CharSequence get() = composing.text
+    val composingText: CharSequence get() = composing.fullText
 
     /** Ô khung gõ đang hiện (toạ độ trong cửa sổ), để nhận chạm; `null` nếu khung đang ẩn. */
     fun composeBox(): android.graphics.Rect? {
@@ -1495,9 +1547,15 @@ class InputRoot(
 
     /** Chữ trong khung gõ, [chosen] ký tự đầu là chữ đã chọn dở (tô màu nhấn); rỗng thì ẩn khung. */
     fun setComposing(text: String, chosen: Int = 0, caret: Int = text.length) {
+        // Bề rộng chữ tối đa: từ lề trái khung gõ tới mép phải, trừ lề trong và chỗ con trỏ ở cuối.
+        val rowWidth = composeRow.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+        val left = (composing.layoutParams as? LayoutParams)?.leftMargin ?: 0
+        composing.maxTextWidth = rowWidth - left - composing.paddingLeft - composing.paddingRight - context.dpi(4)
         // Có thể có chữ Hán đã chọn dở (như pinyin), cần phông Hán Nôm.
         composing.show(text, chosen, caret)
         composing.visibility = if (text.isEmpty()) View.INVISIBLE else View.VISIBLE
+        // Khung gõ tắt: hết lượt gõ, nút 𡨸單 cũng tắt.
+        if (text.isEmpty()) grid.endComposing()
         // Đang tìm emoji mà khung gõ hiện: chỉ con trỏ khung gõ nhấp nháy, con trỏ ô tìm đứng yên.
         emojiSearch.field.steadyCaret = text.isNotEmpty()
         fitComposeRow()
@@ -1865,6 +1923,14 @@ class ComposingView(context: Context) : TextView(context) {
     private var cursorOn = true
     /** Con trỏ đứng trước ký tự thứ này của chữ đang hiện. */
     private var caret = 0
+    /** Bề rộng chữ tối đa (px, không kể lề trong); 0 là không giới hạn. Đặt trước [show]. */
+    var maxTextWidth = 0
+    /** Cả chữ của khung gõ (chữ đang hiện có thể chỉ là một đoạn của nó, hai đầu là "…"). */
+    var fullText = ""
+        private set
+    /** Đoạn đang hiện bắt đầu ở ký tự này của [fullText]; [prefix] là số ký tự "…" thêm ở đầu. */
+    private var windowStart = 0
+    private var prefix = 0
     private val blink = object : Runnable {
         override fun run() {
             cursorOn = !cursorOn
@@ -1873,21 +1939,79 @@ class ComposingView(context: Context) : TextView(context) {
         }
     }
 
-    /** Chữ [text], trong đó [chosen] ký tự đầu là chữ đã chọn dở; con trỏ ở trước ký tự thứ [caret]. */
+    /**
+     * Chữ [text], trong đó [chosen] ký tự đầu là chữ đã chọn dở; con trỏ ở trước ký tự thứ [caret]. Dài quá
+     * [maxTextWidth] thì chỉ hiện một đoạn có con trỏ (phần ẩn thay bằng "…"): con trỏ ở cuối thì hiện phần cuối, dời
+     * con trỏ về chữ trước thì khung cuộn theo, nên vẫn tới được cả chữ đầu.
+     */
     fun show(text: String, chosen: Int, caret: Int = text.length) {
-        this.caret = caret.coerceIn(0, text.length)
-        val shown = SpannableString(context.hanNomText(text))
+        val c = caret.coerceIn(0, text.length)
+        fullText = text
+        // Dấu cách cuối hiện bằng dấu cách không ngắt: dấu cách thường ở cuối dòng không được tính vào bề rộng chữ
+        // (TextView hẹp hơn một dấu cách), con trỏ sau nó bị cắt mất.
+        val shownText = if (text.endsWith(' ')) text.dropLast(1) + ' ' else text
+        val full = SpannableString(context.hanNomText(shownText))
         val end = chosen.coerceIn(0, text.length)
         if (end > 0) {
-            shown.setSpan(ForegroundColorSpan(accent), 0, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            shown.setSpan(BackgroundColorSpan(accent and 0xFFFFFF or (0x2E shl 24)), 0, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            full.setSpan(ForegroundColorSpan(accent), 0, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            full.setSpan(BackgroundColorSpan(accent and 0xFFFFFF or (0x2E shl 24)), 0, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
-        this.text = shown
+        // Dấu cách cuối chuỗi (đã ấn cách một lần, ấn nữa là chọn gợi ý đầu): tô đỏ cho dễ thấy.
+        if (text.length > end && shownText.endsWith(' ')) {
+            full.setSpan(BackgroundColorSpan(TRAILING_SPACE), text.length - 1, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        val (a, b) = window(full, c)
+        windowStart = a
+        prefix = if (a > 0) ELLIPSIS.length else 0
+        this.caret = c - a + prefix
+        this.text = piece(full, a, b)
         // Gõ thêm thì con trỏ hiện ngay, đếm nhịp nháy lại từ đầu (như ô nhập của hệ thống).
         cursorOn = true
         removeCallbacks(blink)
         if (text.isNotEmpty()) postDelayed(blink, BLINK_MS)
         invalidate()
+    }
+
+    /** Đoạn [a, b) của [full], thêm "…" ở đầu / cuối nếu còn chữ bị ẩn bên đó. */
+    private fun piece(full: CharSequence, a: Int, b: Int): CharSequence {
+        if (a == 0 && b == full.length) return full
+        return android.text.SpannableStringBuilder().apply {
+            if (a > 0) append(ELLIPSIS)
+            append(full, a, b)
+            if (b < full.length) append(ELLIPSIS)
+        }
+    }
+
+    /** Đoạn [a, b) của [full] vừa [maxTextWidth] và có con trỏ [c]: thường là phần cuối; con trỏ ở phần bị ẩn thì cuộn theo. */
+    private fun window(full: CharSequence, c: Int): Pair<Int, Int> {
+        val n = full.length
+        val max = maxTextWidth.toFloat()
+        fun fits(a: Int, b: Int) = android.text.Layout.getDesiredWidth(piece(full, a, b), paint) <= max
+        if (max <= 0f || fits(0, n)) return 0 to n
+        // Không cắt giữa cặp surrogate (chữ Hán ngoài BMP).
+        fun low(i: Int) = i in 1 until n && Character.isLowSurrogate(full[i])
+        // Phần cuối: đầu đoạn nhỏ nhất mà vẫn vừa.
+        var lo = 0
+        var hi = n
+        while (lo < hi) {
+            val m = (lo + hi) / 2
+            if (fits(m, n)) hi = m else lo = m + 1
+        }
+        var a = lo
+        if (low(a)) a++
+        if (c >= a) return a to n
+        // Con trỏ ở phần đầu bị ẩn: hiện từ vài ký tự trước con trỏ, kéo về sau tới hết chỗ.
+        a = (c - SCROLL_CONTEXT).coerceAtLeast(0)
+        if (low(a)) a--
+        lo = c
+        hi = n
+        while (lo < hi) {
+            val m = (lo + hi + 1) / 2
+            if (fits(a, m)) lo = m else hi = m - 1
+        }
+        var b = lo
+        if (low(b) && b > c) b--
+        return a to b
     }
 
     override fun onDetachedFromWindow() {
@@ -1899,11 +2023,39 @@ class ComposingView(context: Context) : TextView(context) {
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val tap = onTap ?: return super.onTouchEvent(event)
         if (text.isEmpty()) return false
-        if (event.actionMasked == MotionEvent.ACTION_UP) {
-            val l = layout ?: return true
-            tap(l.getOffsetForHorizontal(0, event.x - totalPaddingLeft + scrollX))
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                // Kéo ngang trên khung gõ: con trỏ chạy theo ngón tay ngay (không đợi nhấc tay).
+                parent?.requestDisallowInterceptTouchEvent(true)
+                lastDrag = -1
+                lastScroll = 0L
+                follow(event.x, tap)
+            }
+            MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> follow(event.x, tap)
         }
         return true
+    }
+
+    /** Vị trí con trỏ lần cuối khi kéo (tránh dời lại cùng chỗ). */
+    private var lastDrag = -1
+    /** Lúc cuộn khung gõ lần cuối khi ngón tay đứng trên "…" (cuộn từng nhịp, không vụt về đầu). */
+    private var lastScroll = 0L
+
+    private fun follow(x: Float, tap: (Int) -> Unit) {
+        val l = layout ?: return
+        // Vị trí trong chữ đang hiện → vị trí trong cả chữ (chạm vào "…" ở đầu thì về ký tự ngay trước đoạn đang hiện).
+        val shown = l.getOffsetForHorizontal(0, x - totalPaddingLeft + scrollX)
+        val at = (shown - prefix + windowStart).coerceIn(0, fullText.length)
+        val onEllipsis = shown < prefix || (shown >= text.length && text.endsWith(ELLIPSIS) && at < fullText.length)
+        if (onEllipsis) {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - lastScroll < SCROLL_MS) return
+            lastScroll = now
+        } else if (at == lastDrag) {
+            return
+        }
+        lastDrag = at
+        tap(at)
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -1921,5 +2073,12 @@ class ComposingView(context: Context) : TextView(context) {
     companion object {
         /** Nhịp nháy của con trỏ (ms), như ô nhập của Android. */
         const val BLINK_MS = 500L
+        const val ELLIPSIS = "…"
+        /** Cuộn khung gõ về trước: số ký tự vẫn hiện trước con trỏ. */
+        const val SCROLL_CONTEXT = 2
+        /** Giữ ngón tay trên "…" khi kéo: mỗi nhịp này cuộn khung gõ một chỗ (ms). */
+        const val SCROLL_MS = 150L
+        /** Nền dấu cách cuối chuỗi: đỏ hơi trong. */
+        const val TRAILING_SPACE = 0xB3E53935.toInt()
     }
 }

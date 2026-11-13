@@ -39,9 +39,13 @@ Cần Android Studio (JDK đi kèm), SDK 36, NDK 28.2 và target Rust
 ```sh
 rustup target add aarch64-linux-android x86_64-linux-android
 cd mobile/android
-./gradlew assembleDebug          # app/build/outputs/apk/debug/app-debug.apk
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+./gradlew assembleRelease        # app/build/outputs/apk/release/app-release.apk
+adb install -r app/build/outputs/apk/release/app-release.apk
 ```
+
+Bản để dùng / phát hành là bản release: bản debug chạy chậm hơn hẳn (đo trên AVD: nạp lõi 2,2 s so với 0,3 s, dựng
+bàn phím 1,2 s so với 0,2 s). Bản release ký bằng khoá debug của máy build, nên cài đè được lên bản debug cũ mà không
+mất dữ liệu.
 
 Sau khi cài: mở ứng dụng "Nôm Na", làm 2 bước bật và chọn "Nôm Na - Bàn phím Hán Nôm".
 

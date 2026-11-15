@@ -239,14 +239,25 @@ fn candidate_records(cands: &[hannom_core::Candidate], limit: jint) -> String {
 }
 
 /// Các lựa chọn đã chọn ở cột trái, mỗi lựa chọn một bản ghi `cấp US giá trị` ([`Engine::narrow`]).
-fn picked_parts(raw: &str) -> Vec<(Part, String)> {
-    raw.split(RS)
-        .filter_map(|r| {
-            let (level, value) = r.split_once(US)?;
-            Some((Part::from_index(level.parse().ok()?)?, value.to_string()))
-        })
-        .collect()
+/// Bản ghi cấp [`LOCK_LEVEL`] là mốc chốt âm ở cột trái: các lựa chọn trước mốc là của các âm đã chốt (mỗi âm một nhóm),
+/// sau mốc cuối là của âm đang chọn. Trả (các âm đã chốt, lựa chọn của âm đang chọn).
+fn picked_parts(raw: &str) -> (Vec<Vec<(Part, String)>>, Vec<(Part, String)>) {
+    let mut groups = vec![Vec::new()];
+    for r in raw.split(RS) {
+        let Some((level, value)) = r.split_once(US) else { continue };
+        let Ok(level) = level.parse::<usize>() else { continue };
+        if level == LOCK_LEVEL {
+            groups.push(Vec::new());
+        } else if let Some(part) = Part::from_index(level) {
+            groups.last_mut().unwrap().push((part, value.to_string()));
+        }
+    }
+    let current = groups.pop().unwrap_or_default();
+    (groups, current)
 }
+
+/// Cấp của mốc chốt âm trong danh sách lựa chọn (xem [`picked_parts`]); Kotlin: `CandidateGrid.LOCK_LEVEL`.
+const LOCK_LEVEL: usize = 5;
 
 /// Cấp thu hẹp kế tiếp ([`Engine::narrow`]): `cấp US lựa chọn US lựa chọn…`; rỗng nếu hết cấp.
 #[no_mangle]
@@ -256,12 +267,37 @@ pub unsafe extern "system" fn Java_com_hannom_ime_NativeCore_narrow(
     handle: jlong,
     keys: jstring,
     picked: jstring,
+    before: jstring,
 ) -> jstring {
     let keys = from_java(env, keys);
-    let picked = picked_parts(&from_java(env, picked));
-    let out = guard(String::new(), || match engine(handle).narrow(&keys, &picked) {
-        Some((level, options)) => std::iter::once((level as usize).to_string()).chain(options).collect::<Vec<_>>().join(&US.to_string()),
-        None => String::new(),
+    let (locks, picked) = picked_parts(&from_java(env, picked));
+    let before = from_java(env, before);
+    let out = guard(String::new(), || {
+        let e = engine(handle);
+        let next = if locks.is_empty() { e.narrow(&keys, &picked) } else { e.narrow_locked(&keys, &before, &locks, &picked) };
+        match next {
+            Some((level, options)) => std::iter::once((level as usize).to_string()).chain(options).collect::<Vec<_>>().join(&US.to_string()),
+            None => String::new(),
+        }
+    });
+    to_java(env, &out)
+}
+
+/// Các đoạn âm của chuỗi phím ([`Engine::syllable_chunks`]): `đầu,cuối` mỗi đoạn, các đoạn ngăn bằng RS.
+#[no_mangle]
+pub unsafe extern "system" fn Java_com_hannom_ime_NativeCore_syllableChunks(
+    env: *mut JNIEnv,
+    _: jclass,
+    telex: jboolean,
+    dz: jboolean,
+    keys: jstring,
+) -> jstring {
+    // Không dùng lõi (chỉ theo kiểu gõ): gọi được ở luồng giao diện trong lúc lõi đang tra gợi ý ở luồng nền.
+    let keys = from_java(env, keys);
+    let options = hannom_core::Options { telex: telex == JNI_TRUE, dz: dz == JNI_TRUE, ..Default::default() };
+    let out = guard(String::new(), || {
+        let chunks: Vec<String> = Engine::syllable_chunks_with(&options, &keys).iter().map(|(s, e)| format!("{s},{e}")).collect();
+        chunks.join(&RS.to_string())
     });
     to_java(env, &out)
 }
@@ -274,11 +310,17 @@ pub unsafe extern "system" fn Java_com_hannom_ime_NativeCore_candidatesNarrowed(
     handle: jlong,
     keys: jstring,
     picked: jstring,
+    before: jstring,
     limit: jint,
 ) -> jstring {
     let keys = from_java(env, keys);
-    let picked = picked_parts(&from_java(env, picked));
-    let out = guard(String::new(), || candidate_records(&engine(handle).candidates_narrowed(&keys, &picked), limit));
+    let (locks, picked) = picked_parts(&from_java(env, picked));
+    let before = from_java(env, before);
+    let out = guard(String::new(), || {
+        let e = engine(handle);
+        let cands = if locks.is_empty() { e.candidates_narrowed(&keys, &picked) } else { e.candidates_locked(&keys, &before, &locks, &picked) };
+        candidate_records(&cands, limit)
+    });
     to_java(env, &out)
 }
 
@@ -320,22 +362,6 @@ pub unsafe extern "system" fn Java_com_hannom_ime_NativeCore_select(
         let e = engine(handle);
         e.options.learning && e.dict.bump(&text, &reading)
     });
-    changed as jboolean
-}
-
-/// Người dùng đưa ra cụm `text` (âm `reading`) cho chuỗi phím `keys` ([`Engine::learn`]): thêm / tăng cụm,
-/// nhớ cả mã gõ tắt toàn phụ âm.
-#[no_mangle]
-pub unsafe extern "system" fn Java_com_hannom_ime_NativeCore_learn(
-    env: *mut JNIEnv,
-    _: jclass,
-    handle: jlong,
-    keys: jstring,
-    text: jstring,
-    reading: jstring,
-) -> jboolean {
-    let (keys, text, reading) = (from_java(env, keys), from_java(env, text), from_java(env, reading));
-    let changed = guard(false, || engine(handle).learn(&keys, &text, &reading));
     changed as jboolean
 }
 
@@ -398,6 +424,12 @@ pub unsafe extern "system" fn Java_com_hannom_ime_NativeCore_dictImport(
         reports.join(&RS.to_string())
     });
     to_java(env, &out)
+}
+
+/// Số cặp chữ – âm trong từ điển.
+#[no_mangle]
+pub unsafe extern "system" fn Java_com_hannom_ime_NativeCore_dictLen(_: *mut JNIEnv, _: jclass, handle: jlong) -> jint {
+    guard(0, || engine(handle).dict.len() as jint)
 }
 
 #[no_mangle]

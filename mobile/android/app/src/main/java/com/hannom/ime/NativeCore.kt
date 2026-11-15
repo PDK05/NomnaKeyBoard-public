@@ -22,16 +22,18 @@ object NativeCore {
     @JvmStatic external fun backspace(keys: String, toneStyle: Int): String
     @JvmStatic external fun backspaceTelex(keys: String, toneStyle: Int): String
     @JvmStatic external fun candidates(handle: Long, keys: String, limit: Int, quocNgu: Boolean): String
-    @JvmStatic external fun narrow(handle: Long, keys: String, picked: String): String
-    @JvmStatic external fun candidatesNarrowed(handle: Long, keys: String, picked: String, limit: Int): String
+    @JvmStatic external fun narrow(handle: Long, keys: String, picked: String, before: String): String
+    /** Không dùng lõi (chỉ theo kiểu gõ), gọi được trong lúc lõi đang tra ở luồng khác. */
+    @JvmStatic external fun syllableChunks(telex: Boolean, dz: Boolean, keys: String): String
+    @JvmStatic external fun candidatesNarrowed(handle: Long, keys: String, picked: String, before: String, limit: Int): String
     @JvmStatic external fun candidatesAfter(handle: Long, before: String, keys: String, limit: Int): String
     @JvmStatic external fun select(handle: Long, text: String, reading: String): Boolean
-    @JvmStatic external fun learn(handle: Long, keys: String, text: String, reading: String): Boolean
     @JvmStatic external fun clearLearned(handle: Long, defaults: String)
     @JvmStatic external fun dictText(handle: Long): String
     @JvmStatic external fun dictLoad(handle: Long, content: String)
     @JvmStatic external fun dictImport(handle: Long, contents: String, apply: Boolean): String
     @JvmStatic external fun dictClear(handle: Long)
+    @JvmStatic external fun dictLen(handle: Long): Int
     @JvmStatic external fun dictRows(handle: Long, query: String): String
     @JvmStatic external fun dictPut(handle: Long, oldText: String, oldReading: String, text: String, readings: String, freq: Int): String
     @JvmStatic external fun dictRemove(handle: Long, text: String, reading: String)

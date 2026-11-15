@@ -97,14 +97,19 @@ khác của chính âm đó để đổi.
 các phụ âm cùng nhóm, nhưng tự ẩn phụ âm nào ghép vào không ra chữ nào cho gọn (gõ `cũng`: có gũng nên hiện g,
 không có kũng nên ẩn k; chỉ gõ phụ âm đầu thì ẩn phụ âm không có âm nào trong từ điển); phụ âm đã gõ đứng đầu.
 Các nhóm:
-  - b / m / v / l / n / p / ph / d / gi / r / đ / t / th
+  - b / m / v / p / ph / d / gi / r
+  - l / n
+  - đ / t / th
   - c / k / qu / g / gh
   - ch / tr
   - ng / ngh
   - s / x
   - h, kh, nh đứng riêng.
 
+  Ngoại lệ một chiều: gõ d thì cột hỏi thêm đ (vẫn ẩn nếu không ra chữ); gõ đ thì không hỏi d.
+
   Đổi qu sang phụ âm khác thì bỏ u, vì chỉ qu mới có u (`quá` → cá, ká, gá, ghá); đổi sang qu thì thêm u.
+  Gõ `q` (chưa có u, kể cả gõ tắt `qg`) thì cột mặc định là qu, không có lựa chọn q riêng: q → qu, c, g, k, gh.
 
   Gõ tắt toàn phụ âm (`ndtphn`): âm tiết đầu là chữ cái đầu (n), nên cột hỏi như khi chỉ gõ `n`: n, rồi các
   phụ âm dài hơn bắt đầu bằng nó (ng, nh, ngh), rồi phụ âm cùng nhóm; chọn phụ âm nào cũng ra chữ của phụ âm đó.
@@ -248,3 +253,164 @@ Google/Gboard.
 | 7   | Bảng emoji &amp; tìm emoji  | F6  | F1           | \[\~\] Android (thiếu nhãn Hán Nôm) |
 | 8   | Bản Android                 | A1  | F1–F6        | \[\~\] Chạy được trên máy ảo        |
 | 9   | Bản iOS                     | I1  | F1–F6        | \[ \] Chưa làm                      |
+
+## 5. Nhật ký hiệu năng
+
+### 5.1 Cách đo
+
+- **Cụm test kinh điển** (từ 2026-11-16): bàn phím Hán Nôm kiểu Telex, đếm "không một hai … hai mươi chín ba mươi"
+  (0 → 30; 15, 25 là "lăm", 21 là "mốt"): 60 âm, 341 phím. Thao tác đo: gõ từng phím, xoá từng phím, mở cột trái của
+  bảng thả, chọn âm (phím cách trong bảng thả), xoá âm (bỏ chốt), chọn chữ Hán, xoá chữ (gỡ chữ đã chọn).
+- **Lõi trên máy tính:** `core/examples/hist.rs` (gõ, xoá, cột trái, nạp từ điển; chỉ dùng hàm có từ bản đầu),
+  `core/examples/cover.rs` (gợi ý đầu ở cuối cụm phủ bao nhiêu phím), `core/examples/classic.rs` (chọn âm, xoá âm,
+  chọn chữ, xoá chữ; chỉ có từ bản ad9d10c). Chạy WebAssembly (Node), mỗi phiên bản build riêng, đo lại cùng lúc
+  ngày 2026-11-16. Sai số giữa hai lần chạy khoảng ±10%: thay đổi dưới 10% coi như **ngang**.
+- **Trên điện thoại**: nhật ký `HanNomPerf` (logcat). Điện thoại chậm hơn máy tính khoảng 2–3 lần.
+- Phần trăm: **nhanh hơn X%** = (trước − sau) / trước; **chậm hơn X%** = (sau − trước) / trước. Mốc so là phiên bản
+  liền trước.
+
+### 5.2 Lõi qua các phiên bản (máy tính, cụm 0 → 30)
+
+Thời gian trung bình mỗi lần (ms); trong ngoặc là lần chậm nhất.
+
+| Phiên bản (ngày) | Nội dung chính | Gõ phím | Xoá phím | Cột trái | Nạp từ điển | Gợi ý đầu phủ |
+| --- | --- | --- | --- | --- | --- | --- |
+| ccd5b1a (10-30) | Bản đầu | 5,34 (15) | 5,16 (17) | 10,3 (26) | 161 | 7/341 phím (1 chữ) |
+| 7c04db4 (11-01) | Một tay, xoá lùi Telex | 6,67 (22) | 6,41 (19) | 14,1 (35) | 194 | 7/341 |
+| ae4d70e (11-09) | Tìm từ điển theo âm, bảng thả | 6,45 (19) | 5,98 (16) | 13,2 (28) | 178 | 7/341 |
+| 81f6dcd (11-10) | Màn hình ngang (0.1.3) | 6,34 (18) | 6,03 (16) | 11,6 (24) | 253 | 7/341 |
+| aa029d6 (11-10) | Trang biểu tượng (0.1.5) | 8,08 (45) | 8,04 (33) | 12,8 (25) | 211 | 7/341 |
+| a55f5e5 (11-14) | Cột chọn nhanh theo nhóm phụ âm (0.1.6) | 8,07 (21) | 9,18 (31) | 5,34 (11) | 212 | 7/341 |
+| cdb199e (11-14) | Câu ghép gõ tắt | 7,14 (22) | 6,55 (19) | 5,04 (12) | 157 | 7/341 |
+| ad9d10c (11-15) | Chốt âm ở cột trái | 6,72 (16) | 6,30 (18) | 4,37 (10) | 122 | 7/341 |
+| Hiện tại (11-16, chưa commit) | Ghép câu không giới hạn độ dài | 23,9 (111) | 19,5 (130) | 4,67 (12) | 112 | **341/341 phím (60 chữ)** |
+
+So với phiên bản liền trước:
+
+| Phiên bản | Gõ phím | Xoá phím | Cột trái | Nạp từ điển | Đánh giá |
+| --- | --- | --- | --- | --- | --- |
+| 7c04db4 | chậm hơn 25% | chậm hơn 24% | chậm hơn 37% | chậm hơn 20% | **Đi lùi** |
+| ae4d70e | ngang (nhanh hơn 3%) | ngang (nhanh hơn 7%) | ngang (nhanh hơn 6%) | nhanh hơn 8% | Ngang |
+| 81f6dcd | ngang | ngang | nhanh hơn 12% | chậm hơn 42% | Đi lùi (nạp từ điển) |
+| aa029d6 | chậm hơn 27% (chậm nhất 18 → 45 ms) | chậm hơn 33% | chậm hơn 10% | nhanh hơn 17% | **Đi lùi** |
+| a55f5e5 | ngang | chậm hơn 14% | **nhanh hơn 58%** | ngang | **Đột phá** (cột trái) |
+| cdb199e | nhanh hơn 12% | nhanh hơn 29% | ngang (nhanh hơn 6%) | nhanh hơn 26% | Cải thiện |
+| ad9d10c | ngang (nhanh hơn 6%) | ngang (nhanh hơn 4%) | nhanh hơn 13% | nhanh hơn 22% | Cải thiện |
+| Hiện tại | chậm hơn 256% (×3,6) | chậm hơn 210% (×3,1) | ngang (chậm hơn 7%) | ngang (nhanh hơn 8%) | **Đột phá về chất lượng, đi lùi về tốc độ** |
+
+Ghi chú:
+
+- Mọi bản tới ad9d10c chỉ ghép câu cho chuỗi phím ngắn (80 phím, Telex 120): với cụm 0 → 30, gợi ý đầu chỉ là chữ
+  "không" (7/341 phím). Bản hiện tại ghép cả câu dài bao nhiêu cũng được (gợi ý đầu là đủ 60 chữ). Gõ, xoá chậm hơn ×3
+  là cái giá của việc này, nhưng vẫn chưa đạt được: chuỗi càng dài càng chậm (phím 324: 111 ms). Đây là việc cần sửa
+  (5.5, bước 2).
+- 81f6dcd, aa029d6: từ điển to thêm nên nạp chậm hơn; cdb199e, ad9d10c đọc từ điển nhanh hơn.
+
+### 5.3 Bảng thả: chọn âm, xoá âm, chọn chữ, xoá chữ (máy tính, cụm 0 → 30)
+
+Có từ bản ad9d10c. Tổng thời gian cả cụm (ms); trong ngoặc là lần chậm nhất.
+
+| Thao tác | ad9d10c (11-15) | Hiện tại (11-16) | Thay đổi | Đánh giá |
+| --- | --- | --- | --- | --- |
+| Chọn âm (60 lần ấn cách) | 1973 | 1517 (60) | nhanh hơn 23% | Cải thiện |
+| Xoá âm (bỏ chốt 60 âm) | 2186 | 1014 (~26) | **nhanh hơn 54%** | **Đột phá** |
+| Chọn chữ (59 lần) | 1103 (60) | 1115 (53) | ngang | Ngang |
+| Xoá chữ (59 lần) | 1093 (57) | 1090 (48) | ngang | Ngang |
+
+### 5.4 Trên điện thoại
+
+Các lần đo ghi lại trong lúc làm (đã ghi trong mã nguồn):
+
+| Ngày | Thao tác | Trước | Sau | Thay đổi | Cách sửa |
+| --- | --- | --- | --- | --- | --- |
+| 2026-11-15 | Chốt âm thứ 10 (cột trái; âm 1: 99 ms) | ~400 ms | chưa đo lại trên điện thoại (máy tính: chọn âm cả cụm nhanh hơn 23%, 5.3) | — | Nhớ kết quả từng đoạn âm đã chốt |
+| 2026-11-15 | Gõ phím, chuỗi ~1000 phím (lõi) | ~150 ms/phím (điện thoại) | ~10–25 ms (máy tính; chưa đo lại trên điện thoại) | **Đột phá** (khác máy đo, chưa ra %) | Ghép câu theo cửa sổ, tính tiếp từ lần trước |
+| 2026-11-15 | Dựng khung gõ, chuỗi ~1000 phím (giao diện) | ~100 ms/phím | 5,6 ms trung bình (đo 11-16, chuỗi ngắn hơn) | **Đột phá** (chưa đo lại ở 1000 phím) | Nhớ chữ Quốc ngữ đã hiện của từng chữ |
+| 2026-11-15 | Bảng thả nhận gợi ý mới | ~85 ms mỗi lần | ~0 ms | nhanh hơn ~100% | Không dựng lại khi chuỗi phím không đổi |
+| 2026-11-15 | Ấn cách / xoá trong bảng thả (giao diện phải chờ) | 40–265 ms | không chờ (tính ở luồng nền) | giao diện hết khựng | Bảng gọi lõi ở luồng nền |
+| 2026-11-15 | Chọn 空 khi đã chốt 17 âm | khựng ~100 ms (chờ tra gợi ý ~45 ms) | chưa đo lại | — | Tính trước cột trái; tra gợi ý sau khi dựng giao diện |
+| 2026-11-16 | Thanh gợi ý khi chọn âm rồi xoá | chớp (đổi 2–3 lần) | đổi 1 lần | hết chớp | Không hiện lại đủ gợi ý khi lưới đang thu hẹp; không dựng bảng hai lần |
+
+Đo bằng nhật ký `HanNomPerf` ngày 2026-11-16 (01:04–01:22, gõ thường trên Messenger):
+
+| Việc | Luồng | Số lần | Trung bình | Chậm nhất | Số lần > 50 ms |
+| --- | --- | --- | --- | --- | --- |
+| Dựng khung gõ và thanh gợi ý mỗi phím | giao diện | 2337 | 5,6 ms | 56 ms | 1 |
+| Tách âm (chỉ chuỗi phím chưa gặp; đã gặp thì lấy lại) | giao diện | 645 | 3,9 ms | 49 ms | 0 |
+| Vẽ bảng thả | giao diện | 416 | 9,7 ms | 58 ms | 1 |
+| Tra gợi ý khi gõ | nền | 374 | 38 ms | 174 ms | 108 |
+| Tính bảng thả (chọn / xoá âm) | nền | 503 | 32 ms | 392 ms | 106 |
+| Tính cột trái | nền | 2692 | 8 ms | 228 ms | 90 |
+
+Luồng giao diện đã đạt (phím không khựng). Chỗ chậm là tính gợi ý ở luồng nền: gợi ý hiện trễ.
+
+### 5.5 Kế hoạch cải thiện (2026-11-16)
+
+Làm từng bước; mỗi bước người dùng thử và duyệt (giữ / bỏ) rồi mới làm bước sau.
+
+| Bước | Việc | Mục tiêu | Trạng thái |
+| --- | --- | --- | --- |
+| 1 | Xoá phím lấy lại gợi ý đã tra lúc gõ (nhớ 400 trạng thái) | Xoá phím ~120 ms → ~0 ms | **Đã duyệt 2026-11-16.** Điện thoại: lấy lại 0,0 ms thay cho tra mới 6–14 ms (chậm nhất 60 ms); người dùng thấy không rõ rệt (cụm thử ngắn), không đổi quy tắc gõ |
+| 4 | Tách âm một lần mỗi phím | Bớt ~10 ms giao diện mỗi phím | **Bỏ:** đã có sẵn (tách âm nhớ theo chuỗi phím); đề xuất ban đầu đọc nhầm nhật ký |
+| 2 | Gõ phím không chậm dần theo độ dài chuỗi | ~20–30 ms mỗi phím ở mọi độ dài | **Đã duyệt 2026-11-16** (người dùng: gõ chữ đen và xoá chữ đen "đúng là đột phá"; chọn âm / chọn chữ / xoá âm / xoá chữ vẫn lag — bước 3). Máy tính, cụm 0 → 30: gõ phím trung bình 23,9 → 7,9 ms (nhanh hơn 67%), chậm nhất 111 → 15 ms (nhanh hơn 86%); xoá phím 19,5 → 7,2 ms (nhanh hơn 63%), chậm nhất 130 → 14 ms (nhanh hơn 89%). Gợi ý giống hệt bản trước (so 20 gợi ý đầu ở 723 phím, 4 câu: `core/examples/samecand.rs`). Điện thoại (01:47–01:54, người dùng gõ tự do, chuỗi tới 267 phím; so với 01:04–01:22 trước bước 1–2, khác nội dung gõ): tra gợi ý khi gõ trung bình 38 → 29 ms (nhanh hơn 24%), chậm nhất 174 → 77 ms (nhanh hơn 56%), số lần > 50 ms 29% → 8%; khoảng 27% lần cần gợi ý lấy lại từ bộ nhớ của bước 1 (0 ms; ước theo 768 lần hỏi, 559 lần tra mới). Chưa phẳng: chuỗi 100–199 phím vẫn ~40 ms trung bình (chữ không phải tiếng Việt / gõ tắt như `lamswz`, `moofsfst` không dùng được cách cắt cửa sổ) |
+| 3 | Bảng thả: nhớ các âm đã chốt; âm nhiều chữ chỉ tính trang đầu | Chọn âm không tăng dần; chậm nhất < 100 ms trên điện thoại | **Tạm duyệt 2026-11-16** (người dùng: không ai chọn cụm 54 âm). Điện thoại, so lần thử 3a (02:09–02:12) với lần thử 3b (02:25–), khác nội dung gõ: tính bảng trung bình 58,8 → 23,9 ms (nhanh hơn 59%), chậm nhất 402 → 105 ms (nhanh hơn 74%), số lần > 50 ms 52% → 7%; tính cột trái 40,4 → 20,7 ms (nhanh hơn 49%); chữ đơn theo âm (mỗi 4 nhóm) 124 → 64 ms (nhanh hơn 48%). Còn lại: chọn âm tiến lên ~20–25 ms mỗi âm trên máy tính khi đã chốt ~40 âm (câu phủ phần phím còn lại tính lại mỗi lần). Chi tiết: **3a:** nhật ký điện thoại cho thấy chỗ lag chính là chờ, không phải tính: xoá âm khi đã chốt ~40 âm, bảng tự tính 2–8 ms mà chờ tới 402 ms sau các lần "tính trước" (33–128 ms mỗi lần) đang giữ lõi. Sửa: chỉ tính trước khi người dùng dừng tay 300 ms. Người dùng: "nhanh rõ rệt", nhưng bật 𡨸單 (chữ đơn) phải chờ lâu: điện thoại 1,1–1,5 giây khi đã chốt ~40 âm (tra lõi riêng cho từng âm, ~30 ms mỗi âm, đợi hết mới hiện). Sửa tiếp: tính 4 nhóm đầu rồi hiện ngay, các nhóm sau tính dần ở nền mỗi lần 4 nhóm, bỏ dở khi người dùng thao tác. **Tạm duyệt 2026-11-16** ("ổn hơn trước"), nhưng giữ phím xoá "siêu lag" và ấn nhanh ▲▼ cũng lag. Nhật ký: giữ xoá khi bật 𡨸單, phím lặp ~50 ms mà mỗi lần dựng lưới 10–150 ms, lưới luôn đuổi theo sau. Sửa (3a-2, chờ duyệt): thao tác dồn dập (hai lần dựng cách < 120 ms) thì khung gõ đổi ngay, lưới chỉ dựng lại trạng thái cuối khi dừng tay; ▲▼ tính từ trang đích của lần ấn trước, chỉ dựng đủ hàng cho trang đó. Người dùng **không chấp nhận** cách sửa ▲▼ (đã hoàn lại); chọn / xoá âm với nhiều âm vẫn "siêu lag". **3b (chờ duyệt):** đo trong lõi khi đã chốt 40 âm (máy tính ~36 ms mỗi lần): 30 ms là ghép câu cho các âm đã chốt — (1) tách đoạn thử mọi độ dài cụm cho mỗi âm (~800 lần, mỗi lần dựng khoá nhớ): thêm phép tra nhanh chữ cái đầu, không có cụm thì bỏ qua; (2) câu phủ phần phím còn lại tính lại mỗi lần chốt / bỏ chốt: nhớ 96 kết quả gợi ý gần nhất theo chuỗi phím. Máy tính, cụm 0 → 30, so ngay sau nhau với bản trước: chọn âm cả cụm nhanh hơn 22% (âm 54: 53 → 30 ms), xoá âm nhanh hơn 55% (mỗi âm 13–35 → 6–13 ms), chọn chữ nhanh hơn 22%, xoá chữ nhanh hơn 26%. Kết quả giống hệt (cột trái, gợi ý khi chốt / bỏ chốt / chọn phụ âm đầu trên 3 câu: `core/examples/samelock.rs`; gợi ý khi gõ: `samecand.rs`). |
+
+Sửa lỗi phát hiện khi so với Gboard (5.6): chạm vào lưới lúc lưới đang chờ dựng lại thì bỏ qua (trước đó chọn trúng
+chữ cũ, nuốt sai phím).
+
+### 5.6 So với Gboard 拼音 (2026-11-16)
+
+**Cách thử.** Điện thoại Android 16, Gboard 18.5.6, ô "Gõ thử" của ứng dụng. Chạm tự động qua adb
+(`input tap`, mỗi lần ~0,09–0,1 giây khi chạm dồn dập), quay màn hình bằng trình ghi màn hình của máy (bật hiện điểm
+chạm). Cùng nội dung đếm 0 → 30: Gboard gõ pinyin liền (153 phím, 61 âm), bàn phím Hán Nôm gõ Telex (341 phím, 60 âm).
+Số lần chạm được nhận: bàn phím Hán Nôm đếm theo nhật ký `HanNomPerf`; Gboard đếm theo ảnh chụp trước / sau mỗi đợt.
+Video quay màn hình 8 phút 45 giây. Máy quay không đều (37–55 khung/giây,
+có chỗ hở tới 85 ms) nên độ trễ đo trên video chỉ là ước lượng.
+
+| Thao tác | Gboard 拼音 | Hán Nôm | Bên tốt hơn |
+| --- | --- | --- | --- |
+| Gõ cả chuỗi 0 → 30 | Câu ghép sai nhiều chữ: 另一二三四五六七**八就是**十一十二**时**三十… (lần sau, đã học: …**把就是试一试而是**三十四**食物是**…) | Câu ghép đủ 60 chữ đúng âm (空𠬠𠄩𠀧𦊚…) | Hán Nôm (chất lượng) |
+| Độ trễ khung gõ khi gõ nhanh (video, ước lượng) | Trung vị ~50 ms, 90% ~140 ms; chỉ ~33 lần vẽ lại cho 153 phím (gộp nhiều phím một lần vẽ) | Trung vị ~17 ms, 90% ~100 ms, chậm nhất ~130 ms; vẽ lại gần như mỗi phím | Hán Nôm (đo được trên một phần lần chạm) |
+| Chốt âm dồn dập (~0,1 giây một lần) | **1/10** lần chạm được nhận | 9/10, rồi 50/60 (mất 17%) | Hán Nôm |
+| Chốt âm nhịp ~0,3 giây | 7/20 | — | |
+| Chốt âm nhịp ~1 giây | Nhận đủ; mỗi lần chốt ~0,9 giây mới thấy (video, ước lượng) | Mỗi lần tính bảng ~0,2 giây khi đã chốt 40–60 âm (nhật ký) | Hán Nôm |
+| Chốt hết âm | Tự đưa cả câu vào ô ngay khi chốt âm cuối | Chờ chọn chữ (phím chốt âm mờ đi) | Tuỳ ý người dùng |
+| Bỏ chốt / xoá dồn dập | Giữ xoá 4 giây vẫn chưa xoá hết đoạn pinyin 153 phím | Bỏ chốt 60 âm trong 8,7 giây, nhận đủ 60/60, về 0 ngay sau lần cuối | Hán Nôm |
+| Chọn chữ dồn dập | Lần chạm không kịp thì **bỏ qua**, không hỏng gì | **Lỗi:** lưới đang chờ dựng lại vẫn nhận chạm, chọn trúng chữ cũ (空空 + `ai'…`, nuốt sai phím). Đã sửa: bỏ qua chạm khi lưới chưa dựng xong | Gboard (trước khi sửa) |
+
+**Gboard làm tốt hơn ở đâu (suy ra từ video và ảnh chụp, chưa đọc mã của Gboard):**
+
+1. **Không bao giờ áp thao tác lên kết quả cũ.** Đang bận thì bỏ qua lần chạm, thay vì xếp hàng hay chạm vào lưới cũ.
+   Bỏ qua thì người dùng phải chạm lại, nhưng không bao giờ ra chữ sai.
+2. **Gộp nhiều lần vẽ khung gõ khi gõ nhanh** (~1 lần vẽ cho 4–5 phím): bớt việc mỗi phím, phím không bao giờ khựng.
+3. **Chốt âm không tính lại cả lưới.** Lưới vẫn hiện chữ của âm đầu (另令灵…) trong suốt lúc chốt các âm sau; chỉ cột trái
+   (lựa chọn của âm kế tiếp) đổi. Việc mỗi lần chốt rất nhẹ.
+4. **Chốt xong âm cuối thì đưa cả câu vào ô**: bớt một bước khi người dùng chỉ muốn sửa vài âm rồi lấy cả câu.
+
+**Đề xuất cho các bản sau** (theo thứ tự lợi / công sức; mục 4 thay đổi cách dùng nên phải hỏi người dùng trước):
+
+1. **Chốt âm nhận đủ mọi lần chạm** (hiện mất ~17% khi chạm 0,1 giây một lần): danh sách âm đã chốt chỉ là một dãy, cộng
+   thêm ngay khi chạm; phần tính lại để sau (đã có hoãn dựng lưới khi thao tác dồn dập). Tìm chỗ đang bỏ lần chạm
+   (`whenReady` / `canLock` khi bảng đang tính).
+2. **Chốt âm chỉ tính cột trái**, như Gboard: lưới chữ của các âm đã chốt tính khi dừng tay (giảm ~0,2 giây mỗi lần
+   chốt khi đã chốt 40–60 âm).
+3. **Gộp vẽ khung gõ theo nhịp khung hình** (`Choreographer`) khi phím tới dồn dập.
+4. (Hỏi người dùng) Có tự đưa cả câu vào ô khi đã chốt hết âm như Gboard không.
+5. Giữ lợi thế hiện có: câu ghép dài đúng, xoá / bỏ chốt nhận đủ mọi lần chạm.
+
+**Đã làm đề xuất 1 (2026-11-16, tạm duyệt, bản 0.1.8).** Đo lại thì không mất lần chạm nào: nhật ký ghi đủ 60 lần chạm xuống,
+nhưng mỗi lần chốt phải chờ một lần dựng bảng (~0,2 giây), nên 60 lần chạm trong 3,5 giây xong 2 giây sau mới chốt hết
+(lần đo trước đếm 50/60 khi hàng đợi chưa chạy hết). Sửa: phím chốt âm nhận lúc chạm xuống và chốt ngay, không chờ lần
+dựng đang tra dở; bảng chỉ dựng lại khi dừng tay. Điện thoại: 60 lần chạm trong 3,5 giây chốt đủ 60/60, bảng chỉ tính 2
+lần, xong **0,13 giây** sau lần chạm cuối (trước: ~2 giây). Chọn chữ dồn dập ở 𡨸單 sau khi sửa lỗi lưới cũ: chọn đúng
+từng âm (空 → 𠬠 → 𠄩 → 𠀧), lần chạm lúc lưới chưa dựng xong bị bỏ qua như Gboard (30 lần chạm dồn dập nhận 4).
+
+**Sửa thanh gợi ý nháy (2026-11-16, tạm duyệt, bản 0.1.8).** Mở / đóng bảng thả, chốt / bỏ chốt âm: thanh gợi ý vẽ hai
+lần (đủ gợi ý, rồi bỏ các chữ của lưới), gợi ý dài và ngắn đổi chỗ liên tục. Sửa: bảng mở thì chỉ lưới vẽ thanh, một
+lần khi dựng xong; gợi ý xuống lưới tính theo cách xếp thanh cho đủ gợi ý, không theo thanh đang hiện.
+
+**Sửa mất lựa chọn chữ Latin (2026-11-16, thay APK của bản 0.1.8).** Gõ `lag`: lõi ghép được câu 痞咦 (la + g gõ tắt) phủ
+hết phím, nên chữ Latin "lag" bị coi như đã có chữ Hán khớp trọn và xuống lưới. Sửa: chữ có đoạn toàn phụ âm đứng sau
+một âm có nguyên âm (`lag` hiện la g) là chữ không phải tiếng Việt, chữ Latin lên thanh (vị trí 2); có nhiều chữ thì cả
+cụm Latin (`không lag`) đứng trước chữ đầu (`không`). Gõ tắt dính liền âm gõ đủ (`twcmieenf`) và gõ liền (`chunom`) không
+đổi. Đã chốt âm thì lựa chọn 空lag vẫn lên thanh khi thu bảng (bảng mở thì nằm ở lưới, như trước).

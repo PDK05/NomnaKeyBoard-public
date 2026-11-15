@@ -353,7 +353,7 @@ private val CHECKED = intArrayOf(android.R.attr.state_checked)
  * Nút tròn của công tắc kiểu Material 3 (như Gboard): bật thì to, tắt thì nhỏ.
  * Viền trong suốt dày hơn làm nút trông nhỏ hơn mà công tắc không đổi kích thước.
  */
-private fun View.switchThumb(colors: SettingsColors): StateListDrawable {
+internal fun View.switchThumb(colors: SettingsColors): StateListDrawable {
     val size = context.dpi(28)
     fun knob(color: Int, inset: Int) = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
@@ -368,7 +368,7 @@ private fun View.switchThumb(colors: SettingsColors): StateListDrawable {
 }
 
 /** Rãnh công tắc: bật thì tô màu nhấn, tắt thì nền thanh có viền. */
-private fun View.switchTrack(colors: SettingsColors): StateListDrawable {
+internal fun View.switchTrack(colors: SettingsColors): StateListDrawable {
     fun pill(fill: Int, stroke: Int) = GradientDrawable().apply {
         cornerRadius = context.dp(16f)
         setColor(fill)

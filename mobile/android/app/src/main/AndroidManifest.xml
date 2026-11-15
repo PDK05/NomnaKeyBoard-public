@@ -45,6 +45,18 @@
             </intent-filter>
         </activity>
 
+        <!-- Các từ điển của một ngôn ngữ, và các mục của một từ điển (mở từ trang Từ điển). -->
+        <activity
+            android:name=".DictListActivity"
+            android:exported="false"
+            android:theme="@style/SettingsTheme"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".DictWordsActivity"
+            android:exported="false"
+            android:theme="@style/SettingsTheme"
+            android:windowSoftInputMode="adjustResize" />
+
         <!-- Hộp thoại "Thêm mục mới" của bảng nhớ tạm: ô nhập thật để chính bàn phím gõ vào. -->
         <activity
             android:name=".ClipAddActivity"

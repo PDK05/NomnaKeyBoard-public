@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use crate::dict::{self, Dictionary};
+use crate::dict::{self, Dictionary, Entry};
 use crate::segment;
 use crate::syllable::{self, Check, ToneStyle};
 use crate::telex;
@@ -61,20 +61,62 @@ pub struct Engine {
     /// Kết quả [`Engine::narrow_rows`] lần gần nhất: cột chọn nhanh hỏi lại cùng chuỗi phím nhiều lần mỗi lần dựng
     /// (nhóm phụ âm lớn thì mỗi lần tính mất vài chục ms).
     narrow_cache: NarrowCache,
+    /// Luôn hỏi nguyên âm đầu trước vần, kể cả khi ít vần (xem [`MERGED_RHYMES`]); cho kiểm thử từng cấp.
+    pub always_ask_vowel: bool,
 }
 
 type NarrowRow = (Candidate, [String; 5], bool);
+type LockedRow = (Candidate, Option<[String; 5]>, bool);
 
 /// Bộ nhớ đệm cho [`Engine::narrow_rows`] (vài mục gần nhất, theo chuỗi phím, kiểu gõ, số mục từ điển, phụ âm
-/// cần chữ thay) và cho [`Engine::initial_has_words`] (theo số mục từ điển).
+/// cần chữ thay), cho [`Engine::locked_rows`] (cột trái và lưới hỏi cùng các âm đã chốt ngay sau nhau, mỗi lần tính
+/// mất vài chục ms trên điện thoại) và cho [`Engine::initial_has_words`] (theo số mục từ điển).
 #[derive(Default)]
 struct NarrowCache {
     rows: std::sync::Mutex<Vec<(String, std::sync::Arc<Vec<NarrowRow>>)>>,
+    locked: std::sync::Mutex<Vec<(String, std::sync::Arc<Vec<LockedRow>>)>>,
+    /// [`Engine::locked_source`] lần gần nhất.
+    source: std::sync::Mutex<Option<(String, std::sync::Arc<Vec<(Candidate, u32, Rank)>>)>>,
     initials: std::sync::Mutex<(usize, std::collections::HashMap<String, bool>)>,
+    /// Các mục tốt nhất cho từng đoạn âm đã chốt (trong [`Engine::locked_rows`]), theo số mục từ điển: chốt thêm một
+    /// âm thì các đoạn trước không phải quét lại từ điển (ấn cách liên tục trong bảng thả; đo 2026-11-15: không có
+    /// đệm thì chốt âm thứ 10 mất ~400 ms trên điện thoại).
+    pieces: std::sync::Mutex<(usize, std::collections::HashMap<String, Vec<(usize, String, String)>>)>,
+    /// Kết quả [`Engine::candidates`] gần đây (Telex), theo (phiên bản [`Engine::window_version`], chuỗi phím), mới dùng
+    /// sau cùng: chốt / bỏ chốt âm tính lại câu phủ phần phím còn lại ([`Engine::locked_composed`]), bỏ chốt thì phần đó
+    /// trở lại đúng như trước. Học (chọn gợi ý) thì xoá.
+    candidates: std::sync::Mutex<Vec<(String, String, std::sync::Arc<Vec<Candidate>>)>>,
+    /// Gợi ý của từng cửa sổ ghép câu ([`Engine::window_ranked`]), theo (kiểu gõ, số mục từ điển): gõ thêm ở cuối thì
+    /// các cửa sổ phía trước không đổi, ghép câu chỉ tra lại vài cửa sổ cuối. Học (chọn gợi ý) thì xoá.
+    /// Khoá: (cửa sổ, gõ tắt toàn phụ âm, có [`Engine::initials_glued`], cửa sổ tới cuối chuỗi); kèm lần dùng gần nhất
+    /// (số đếm ở trường cuối), đầy thì bỏ nửa cũ nhất.
+    windows: std::sync::Mutex<(String, std::collections::HashMap<(String, bool, bool, bool), (std::sync::Arc<Vec<Candidate>>, u64)>, u64)>,
+    /// Vài lần ghép câu Telex gần nhất ([`Engine::sentence`]), để gõ thêm thì tính tiếp.
+    sentence: std::sync::Mutex<Vec<SentenceMemo>>,
+    /// [`Engine::telex_word_kind`] theo chữ, cùng phiên bản với `windows`.
+    words: std::sync::Mutex<(String, std::collections::HashMap<String, (bool, bool, bool)>)>,
 }
 
-/// Số mục giữ trong [`NarrowCache::rows`]: cột trái, lưới và mục chọn nhanh hỏi cùng chuỗi phím với vài phụ âm khác nhau.
-const NARROW_CACHE_SIZE: usize = 6;
+/// Số lần ghép câu giữ trong [`NarrowCache::sentence`] (cũ nhất bỏ trước).
+const SENTENCE_MEMOS: usize = 4;
+
+/// Một bước của đường ghép câu tốt nhất tới một vị trí ([`Engine::sentence`]): (số mảnh, số mảnh gõ tắt, vị trí trước,
+/// mảnh).
+type SentenceStep = (usize, usize, usize, Candidate);
+
+/// Trạng thái một lần ghép câu ([`NarrowCache::sentence`]): phiên bản ([`Engine::window_version`]), gõ tắt toàn phụ âm,
+/// chuỗi phím, đường tốt nhất và cuối cửa sổ của từng vị trí.
+struct SentenceMemo {
+    version: String,
+    run: bool,
+    chars: Vec<char>,
+    best: Vec<Option<SentenceStep>>,
+    ends: Vec<usize>,
+}
+
+/// Số mục giữ trong [`NarrowCache::rows`]: cột trái, lưới và mục chọn nhanh hỏi cùng chuỗi phím với vài phụ âm khác nhau;
+/// bộ gõ còn tính trước vài trạng thái sau khi chọn chữ trên thanh gợi ý (Android `prefetchPicks`).
+const NARROW_CACHE_SIZE: usize = 12;
 
 impl Clone for NarrowCache {
     fn clone(&self) -> Self {
@@ -144,6 +186,38 @@ impl Engine {
     /// (`ma` → ma trước má, mà) → thứ tự trong từ điển.
     /// Không gợi ý nào phủ hết chuỗi phím thì thêm lên đầu gợi ý [ghép](Self::sentence).
     pub fn candidates(&self, keys: &str) -> Vec<Candidate> {
+        if !self.options.telex {
+            return self.candidates_uncached(keys);
+        }
+        let version = self.window_version();
+        if let Ok(mut m) = self.narrow_cache.candidates.lock() {
+            if let Some(at) = m.iter().position(|(v, k, _)| *v == version && k == keys) {
+                let hit = m.remove(at);
+                let out = hit.2.as_ref().clone();
+                m.push(hit);
+                return out;
+            }
+        }
+        let out = self.candidates_uncached(keys);
+        if let Ok(mut m) = self.narrow_cache.candidates.lock() {
+            m.retain(|(v, _, _)| *v == version);
+            if m.len() >= CANDIDATES_CACHE {
+                m.remove(0);
+            }
+            m.push((version, keys.to_string(), std::sync::Arc::new(out.clone())));
+        }
+        out
+    }
+
+    /// [`Self::candidates`] không qua bộ nhớ.
+    fn candidates_uncached(&self, keys: &str) -> Vec<Candidate> {
+        // Telex dài hơn một cửa sổ ghép câu: gợi ý ở đầu cũng chỉ tra cửa sổ đầu ([`Self::window_ranked`]; cụm dài nhất
+        // nằm gọn trong đó), khỏi tách và tra cả chuỗi mỗi phím (đo trên điện thoại, ~1000 phím: ~150 ms mỗi phím).
+        if self.options.telex && keys.split('\'').filter(|w| !w.is_empty()).count() > SENTENCE_WINDOW_WORDS {
+            let chars: Vec<char> = keys.chars().collect();
+            let first = self.window_ranked(&chars, 0, false, false, &self.window_version());
+            return self.with_sentence(keys, first.as_ref().clone());
+        }
         self.with_sentence(keys, self.ranked(keys))
     }
 
@@ -152,7 +226,22 @@ impl Engine {
         let len = keys.chars().count();
         // Chuỗi phím không phải tiếng Việt (`greenwich`): không ghép câu, nhưng vẫn gợi ý theo phần đầu (`g` → 家,
         // gà, gia…) để chọn dần từng chữ; mã gõ tắt khớp cả chuỗi đứng trước.
-        if !self.is_vietnamese(keys) && !(self.options.telex && is_initials_only(keys)) {
+        // Telex trộn gõ tắt toàn phụ âm với âm gõ đủ (`twc'mieenf'bawcs` → 中央局沔北): mỗi chữ (giữa các dấu tách)
+        // là tiếng Việt hay toàn phụ âm thì vẫn ghép câu (người dùng muốn 2026-11-15).
+        // Một chữ cũng có thể là gõ tắt dính liền âm gõ đủ ở cuối (`twcmieenf` → t w c miền; người dùng muốn
+        // 2026-11-15).
+        // Telex xét từng chữ (giữa các dấu tách, [`Self::telex_word_kind`]): chuỗi phím dài thì các chữ phía trước đã có
+        // trong đệm, khỏi xét lại mỗi phím.
+        let vietnamese = if self.options.telex {
+            let version = self.window_version();
+            let kinds: Vec<(bool, bool, bool)> =
+                keys.split('\'').filter(|w| !w.is_empty()).map(|w| self.telex_word_kind(w, &version)).collect();
+            let mixed = kinds.iter().all(|k| k.1) && (keys.contains('\'') || kinds.first().is_some_and(|k| k.2));
+            kinds.iter().all(|k| k.0) || is_initials_only(keys) || mixed
+        } else {
+            self.is_vietnamese(keys)
+        };
+        if !vietnamese {
             return cands;
         }
         let limit = if self.options.telex { MAX_SENTENCE_KEYS_TELEX } else { MAX_SENTENCE_KEYS };
@@ -173,6 +262,21 @@ impl Engine {
         cands
     }
 
+    /// Một chữ (không có dấu tách) là các chữ cái gõ tắt rồi đúng một âm gõ đủ ở cuối ([`Self::syllable_chunks`]):
+    /// `twcmieenf` → t, w, c, mieenf. Chữ nước ngoài như `exchanging` (e x cha n g) không phải.
+    fn initials_then_syllable(&self, word: &str) -> bool {
+        if word.contains('\'') {
+            return false;
+        }
+        let chars: Vec<char> = word.chars().collect();
+        let chunks = self.syllable_chunks(word);
+        let Some((&(s, e), init)) = chunks.split_last() else { return false };
+        let consonants = |a: usize, b: usize| chars[a..b].iter().all(|c| c.is_ascii_alphabetic() && !"aeiouy".contains(text::lower(*c)));
+        !init.is_empty()
+            && init.iter().all(|&(a, b)| consonants(a, b))
+            && self.is_vietnamese(&chars[s..e].iter().collect::<String>())
+    }
+
     /// Gợi ý cả câu (`quocqsvietqj` → 國越, `mhb` → 𠬠𠄩𠀧): mỗi vị trí trong chuỗi phím chỉ xét các
     /// gợi ý bắt đầu ở đó (gợi ý đứng đầu cho mỗi độ dài), rồi chọn đường phủ hết chuỗi phím ít mảnh
     /// nhất, ít mảnh gõ tắt nhất (quy hoạch động). `first`: gợi ý tại vị trí đầu, đã tính.
@@ -182,36 +286,96 @@ impl Engine {
         // Chuỗi phụ âm liền nhau: mảnh sau (kể cả một phụ âm đứng cuối) cũng không tự gộp phụ âm.
         let run = self.options.telex && is_initials_only(keys);
         // best[i]: (số mảnh, số mảnh gõ tắt, vị trí trước, mảnh) của đường tốt nhất tới i.
-        let mut best: Vec<Option<(usize, usize, usize, Candidate)>> = vec![None; n + 1];
-        let mut reached = vec![false; n + 1];
-        reached[0] = true;
-        for i in 0..n {
-            if !reached[i] {
+        let mut best: Vec<Option<SentenceStep>> = vec![None; n + 1];
+        // ends[i]: cuối cửa sổ ([`Self::window_end`]) của vị trí i đã xét (Telex), usize::MAX nếu chưa xét.
+        let mut ends = vec![usize::MAX; n + 1];
+        let version = self.window_version();
+        // Telex: tính tiếp từ lần trước ([`NarrowCache::sentence`]). Vị trí có cửa sổ nằm hẳn trong phần đầu chung với
+        // chuỗi phím lần trước thì gợi ý ở đó như cũ; tới vị trí đầu tiên không như thế (`from`) thì mọi đường tốt nhất
+        // đều như cũ. Chỉ xét lại các vị trí trước `from` có mảnh vượt qua `from`, rồi xét tiếp từ `from`, cùng thứ tự
+        // như xét từ đầu nên ra cùng kết quả; gõ thêm ở cuối thì không phải đi lại cả chuỗi phím dài.
+        let mut order: Vec<usize> = Vec::new();
+        let mut from = 0;
+        let shared = |m: &SentenceMemo| m.chars.iter().zip(&chars).take_while(|(a, b)| a == b).count();
+        // Lấy lần có phần đầu chung dài nhất (bộ gõ còn tính trước chuỗi phím sau khi chọn chữ, xen giữa các phím gõ).
+        let memo = if self.options.telex {
+            self.narrow_cache.sentence.lock().ok().and_then(|mut m| {
+                m.retain(|m| m.version == version);
+                let at = (0..m.len()).filter(|&k| m[k].run == run).max_by_key(|&k| shared(&m[k]))?;
+                Some(m.remove(at))
+            })
+        } else {
+            None
+        };
+        if let Some(memo) = memo {
+            let common = shared(&memo);
+            let reached_old = |i: usize| i == 0 || memo.best[i].is_some();
+            from = (0..common.min(n)).find(|&i| reached_old(i) && memo.ends[i] >= common).unwrap_or(common.min(n));
+            for i in 0..from {
+                if reached_old(i) {
+                    ends[i] = memo.ends[i];
+                    if ends[i] > from {
+                        order.push(i);
+                    }
+                }
+            }
+            let mut old = memo.best;
+            old.truncate(from + 1);
+            best.splice(0..=from, old);
+        }
+        order.extend(from..n);
+        for i in order {
+            if i > 0 && best[i].is_none() {
                 continue;
+            }
+            if self.options.telex && ends[i] == usize::MAX {
+                ends[i] = Self::window_end(&chars, i);
             }
             let (pieces, abbr) = best[i].as_ref().map_or((0, 0), |b| (b.0, b.1));
             // Mảnh một chữ cái lấy chữ dùng nhiều nhất của âm đó, cả phụ âm dài hơn (`phn`: phải, phố trước pi;
             // người dùng muốn 2026-11-14); mảnh là cụm gõ tắt vẫn giữ mỗi chữ cái một phụ âm.
-            let here = if i == 0 { first.to_vec() } else { self.ranked_in(&chars[i..].iter().collect::<String>(), run) };
+            // Telex: gõ tắt dính liền âm gõ đủ (`twcmieenf`, [`Self::initials_glued`]) cũng là mảnh.
+            let here: std::sync::Arc<Vec<Candidate>> = if i == 0 {
+                let mut here = first.to_vec();
+                if !run && self.options.telex {
+                    here.extend(self.initials_glued(&chars, 0));
+                }
+                std::sync::Arc::new(here)
+            } else if self.options.telex {
+                self.window_ranked(&chars, i, run, !run, &version)
+            } else {
+                std::sync::Arc::new(self.ranked_in(&chars[i..].iter().collect::<String>(), run))
+            };
             let mut lengths = HashSet::new();
             // Đã xếp hạng: gợi ý đầu tiên của mỗi độ dài là tốt nhất.
-            for c in here.into_iter().filter(|c| c.consumed > 0 && lengths.insert(c.consumed)) {
+            for c in here.iter().filter(|c| c.consumed > 0 && lengths.insert(c.consumed)) {
                 let j = i + c.consumed;
                 let cost = (pieces + 1, abbr + usize::from(c.abbreviated));
                 if best[j].as_ref().is_none_or(|b| cost < (b.0, b.1)) {
-                    best[j] = Some((cost.0, cost.1, i, c));
-                    reached[j] = true;
+                    best[j] = Some((cost.0, cost.1, i, c.clone()));
                 }
             }
         }
         let mut path = Vec::new();
         let mut j = n;
         while j > 0 {
-            let (_, _, i, c) = best[j].clone()?;
+            let Some((_, _, i, c)) = best[j].clone() else { break };
             path.push((i, c));
             j = i;
         }
         path.reverse();
+        let complete = j == 0;
+        if self.options.telex {
+            if let Ok(mut m) = self.narrow_cache.sentence.lock() {
+                if m.len() >= SENTENCE_MEMOS {
+                    m.remove(0);
+                }
+                m.push(SentenceMemo { version, run, chars, best, ends });
+            }
+        }
+        if !complete {
+            return None;
+        }
         // Cụm dài không giới hạn (kể cả lặp một mảnh, `nomnomnom…` → 喃喃喃…): thanh gợi ý tự thu nhỏ chữ.
         if path.len() < 2 {
             return None;
@@ -232,6 +396,166 @@ impl Engine {
             joined: true,
             breaks,
         })
+    }
+
+    /// Gợi ý bắt đầu ở vị trí `i` của `chars` cho [`Self::sentence`] (Telex): chỉ tra một cửa sổ [`SENTENCE_WINDOW_WORDS`]
+    /// chữ (giữa các dấu tách) từ `i`, không phải cả phần còn lại: cụm dài nhất trong từ điển ngắn hơn thế, nên kết quả
+    /// như tra cả phần còn lại, mà thời gian không tăng theo độ dài chuỗi phím. Cửa sổ chưa tới cuối chuỗi thì bỏ các
+    /// gợi ý phủ hết cửa sổ (gợi ý cho chữ gõ dở ở cuối, như `v` → 越南, chỉ đúng ở cuối thật). Nhớ theo cửa sổ
+    /// ([`NarrowCache::windows`]): gõ thêm ở cuối thì chỉ các cửa sổ cuối đổi.
+    /// `glued`: thêm cả [`Self::initials_glued`] (ghép câu); `version`: [`Self::window_version`].
+    fn window_ranked(&self, chars: &[char], i: usize, run: bool, glued: bool, version: &str) -> std::sync::Arc<Vec<Candidate>> {
+        let n = chars.len();
+        let end = Self::window_end(chars, i);
+        let window: String = chars[i..end].iter().collect();
+        let whole = end == n;
+        let key = (window, run, glued, whole);
+        if let Ok(mut cache) = self.narrow_cache.windows.lock() {
+            if cache.0 == version {
+                cache.2 += 1;
+                let now = cache.2;
+                if let Some(c) = cache.1.get_mut(&key) {
+                    c.1 = now;
+                    return c.0.clone();
+                }
+            }
+        }
+        // Cửa sổ tới cuối chuỗi: mỗi phím gõ thêm đổi chữ cuối, nên mọi cửa sổ tới cuối (tới ~17 chữ) đều phải tra lại
+        // (cụm test 0 → 30: ~106 vị trí, ~117 ms ở phím 324). Từ điển không có cụm nào mở đầu bằng các chữ từ `i` tới
+        // trước chữ cuối thì không gợi ý nào ở `i` chạm tới chữ cuối: như tra phần tới dấu tách cuối (đã nhớ, không đổi
+        // khi gõ tiếp chữ cuối).
+        if whole && !run {
+            if let Some(cut) = self.cut_before_last_word(chars, i, version) {
+                return self.window_ranked(&chars[..=cut], i, run, glued, version);
+            }
+        }
+        let mut found = self.ranked_in(&key.0, run);
+        if !whole {
+            found.retain(|c| c.consumed < end - i);
+        }
+        if glued {
+            found.extend(self.initials_glued(chars, i));
+        }
+        let found = std::sync::Arc::new(found);
+        if let Ok(mut cache) = self.narrow_cache.windows.lock() {
+            if cache.0 != version {
+                cache.0 = version.to_string();
+                cache.1.clear();
+            } else if cache.1.len() >= SENTENCE_WINDOW_CACHE {
+                // Bỏ nửa dùng lâu nhất (xoá hết thì phím kế tiếp phải tra lại mọi cửa sổ: ~120 ms một phím).
+                let mut used: Vec<u64> = cache.1.values().map(|v| v.1).collect();
+                used.sort_unstable();
+                let cut = used[used.len() / 2];
+                cache.1.retain(|_, v| v.1 > cut);
+            }
+            cache.2 += 1;
+            let now = cache.2;
+            cache.1.insert(key, (found.clone(), now));
+        }
+        found
+    }
+
+    /// Cho [`Self::window_ranked`] (Telex): vị trí dấu tách cuối của `chars` nếu không gợi ý nào bắt đầu ở `i` chạm tới
+    /// chữ cuối (đang gõ dở): mọi chữ từ `i` tới trước chữ cuối là âm tiếng Việt gõ đủ, và từ điển không có cụm nào mở
+    /// đầu bằng các âm đó (bỏ dấu) rồi còn âm nữa. `None`: phải tra cả cửa sổ.
+    fn cut_before_last_word(&self, chars: &[char], i: usize, version: &str) -> Option<usize> {
+        if !self.options.telex {
+            return None;
+        }
+        // Đã ấn cách sau chữ cuối (`…'muwowi'`): chữ cuối là chữ trước các dấu tách cuối chuỗi.
+        let e = chars.len() - chars.iter().rev().take_while(|&&c| c == '\'').count();
+        if e <= i {
+            return None;
+        }
+        let cut = i + chars[i..e].iter().rposition(|&c| c == '\'')?;
+        let start = i + chars[i..].iter().take_while(|&&c| c == '\'').count();
+        if cut <= start {
+            return None;
+        }
+        let mid: String = chars[start..cut].iter().collect();
+        let mut folded = Vec::new();
+        for w in mid.split('\'').filter(|w| !w.is_empty()) {
+            if is_initials_only(w) || !self.telex_word_kind(w, version).0 {
+                return None;
+            }
+            let shown = telex::display_telex(w, self.options.tone_style);
+            if shown.is_empty() || shown.contains(' ') {
+                return None;
+            }
+            folded.push(text::fold_key(&shown));
+        }
+        let prefix = format!("{} ", folded.join(" "));
+        if self.dict.lookup_phrase_prefix(&prefix).next().is_some() {
+            return None;
+        }
+        Some(cut)
+    }
+
+    /// Một chữ Telex (không có dấu tách) cho [`Self::with_sentence`]: (là tiếng Việt, là tiếng Việt / toàn phụ âm / gõ tắt
+    /// dính liền âm gõ đủ, là gõ tắt dính liền âm gõ đủ ([`Self::initials_then_syllable`])). Nhớ trong [`NarrowCache::words`].
+    fn telex_word_kind(&self, word: &str, version: &str) -> (bool, bool, bool) {
+        if let Ok(cache) = self.narrow_cache.words.lock() {
+            if cache.0 == version {
+                if let Some(&k) = cache.1.get(word) {
+                    return k;
+                }
+            }
+        }
+        let vietnamese = self.is_vietnamese(word);
+        let glued = self.initials_then_syllable(word);
+        let kind = (
+            vietnamese,
+            vietnamese || word.chars().all(|c| c.is_ascii_alphabetic() && !"aeiouyAEIOUY".contains(c)) || glued,
+            glued,
+        );
+        if let Ok(mut cache) = self.narrow_cache.words.lock() {
+            if cache.0 != version || cache.1.len() >= WORD_KIND_CACHE {
+                cache.0 = version.to_string();
+                cache.1.clear();
+            }
+            cache.1.insert(word.to_string(), kind);
+        }
+        kind
+    }
+
+    /// Cuối cửa sổ ghép câu bắt đầu ở `i` ([`Self::window_ranked`]): sau [`SENTENCE_WINDOW_WORDS`] chữ (kể cả các dấu tách
+    /// theo sau), hoặc cuối chuỗi phím.
+    fn window_end(chars: &[char], i: usize) -> usize {
+        let n = chars.len();
+        let mut end = i;
+        let mut words = 0;
+        while end < n && words < SENTENCE_WINDOW_WORDS {
+            while end < n && chars[end] != '\'' {
+                end += 1;
+            }
+            while end < n && chars[end] == '\'' {
+                end += 1;
+            }
+            words += 1;
+        }
+        end
+    }
+
+    /// Phiên bản của [`NarrowCache::windows`]: kiểu gõ và số mục từ điển (học thêm thì đổi).
+    fn window_version(&self) -> String {
+        format!("{:?}\u{0}{}", self.options, self.dict.entries().len())
+    }
+
+    /// Gõ tắt dính liền âm gõ đủ (`twcmieenf`, [`Self::initials_then_syllable`]) ở chữ bắt đầu tại `i`: các chữ cái gõ
+    /// tắt ghép như gõ tắt toàn phụ âm (`twc` → 相應…), không chỉ từng chữ một ([`Self::sentence`]).
+    fn initials_glued(&self, chars: &[char], i: usize) -> Vec<Candidate> {
+        let n = chars.len();
+        let word_end = chars[i..].iter().position(|&c| c == '\'').map_or(n, |p| i + p);
+        let word: String = chars[i..word_end].iter().collect();
+        if !self.initials_then_syllable(&word) {
+            return Vec::new();
+        }
+        let last = self.syllable_chunks(&word).last().map_or(0, |c| c.0);
+        if last < 2 {
+            return Vec::new();
+        }
+        let initials: String = chars[i..i + last].iter().collect();
+        self.ranked_in(&initials, true).into_iter().filter(|c| c.consumed >= 2).collect()
     }
 
     /// Chữ một âm tiết gõ dở ở đầu chuỗi phím (`h` → 漢, 𠄩…, `ng` → 𠊛, 𣈜…), xếp sau chữ gõ đủ.
@@ -542,6 +866,12 @@ impl Engine {
     /// lại khớp phần đầu của `keys` như gõ tắt (mỗi âm một đoạn đầu, hoặc gõ đủ kèm dấu). Mỗi gợi ý là phần
     /// chữ còn lại, kèm cả cụm (chữ, âm đọc) để học khi chốt.
     pub fn after(&self, before: &str, keys: &str) -> Vec<(Candidate, String, String)> {
+        self.after_in(before, keys, false)
+    }
+
+    /// [`Self::after`]; `loose`: chữ cái khớp cả phụ âm dài hơn bắt đầu bằng nó (`t` → trị) cả khi gõ toàn phụ âm, vì
+    /// phụ âm đầu đã chốt theo lựa chọn ở cột trái ([`Self::locked_rows`]).
+    fn after_in(&self, before: &str, keys: &str, loose: bool) -> Vec<(Candidate, String, String)> {
         let (letters, at) = self.letters_at(keys);
         if before.is_empty()
             || letters.is_empty()
@@ -549,8 +879,23 @@ impl Engine {
         {
             return Vec::new();
         }
-        let locked = self.locked_words(keys, &at);
         let key_chars: Vec<char> = keys.chars().collect();
+        // Telex trộn gõ tắt với chữ gõ đủ (中 + `wc'mieenf'b`): đoạn toàn phụ âm ở đầu (`wc`) tách đâu cũng được như
+        // khi chỉ gõ `wc` (中 + `w` → 央; người dùng muốn 2026-11-15). Số phím của đoạn đó, 0 nếu không có.
+        let mut run_end = 0;
+        if self.options.telex {
+            let mut pos = 0;
+            for word in keys.split('\'') {
+                let n = word.chars().count();
+                if n == 0 || !word.chars().all(|c| c.is_ascii_alphabetic() && !"aeiouyAEIOUY".contains(c)) {
+                    break;
+                }
+                pos += n;
+                run_end = pos;
+                pos += 1;
+            }
+        }
+        let locked = self.locked_words(keys, &at);
         // Vị trí chữ → vị trí phím (hai phím `dd` là một chữ đ), kèm các dấu `'` ngay sau.
         let consumed_at = |end: usize| {
             let mut consumed = at.iter().take_while(|&&p| p < end).count();
@@ -563,8 +908,10 @@ impl Engine {
         // cho mỗi `n`); chuỗi toàn phụ âm là gõ tắt, tách đâu cũng được.
         let free = !self.options.telex || is_initials_only(keys);
         // Phụ âm liền nhau là đúng phụ âm đó, không tự gộp ([`single_initial`]).
-        let strict = self.options.telex && is_initials_only(keys);
-        let fits = |consumed: usize| free || consumed == key_chars.len() || key_chars[consumed - 1] == '\'';
+        let strict = !loose && self.options.telex && (is_initials_only(keys) || run_end > 0);
+        let fits = |consumed: usize| {
+            free || consumed == key_chars.len() || key_chars[consumed - 1] == '\'' || consumed <= run_end
+        };
         // Telex: các chữ gõ đủ đầu chuỗi (`noom'laf` → nôm, là), mỗi chữ kèm vị trí phím sau nó và dấu `'`;
         // gõ tắt ở trên chỉ khớp phím thô nên không nhận `oo` là ô.
         let mut words: Vec<(segment::Segment, usize)> = Vec::new();
@@ -588,10 +935,9 @@ impl Engine {
         // (gợi ý, cụm, âm cụm, số chữ của before dùng, độ phổ biến, thứ tự)
         let mut found: Vec<(Candidate, String, String, usize, u32, usize)> = Vec::new();
         let mut seen = HashSet::new();
-        for (order, e) in self.dict.entries().iter().enumerate() {
-            if e.is_shortcut() {
-                continue;
-            }
+        // Chỉ các cụm bắt đầu bằng một chữ của before (phần cuối của before là đầu cụm), theo thứ tự trong từ điển.
+        for order in self.dict.phrases_starting_with(&before) {
+            let e = &self.dict.entries()[order];
             let text: Vec<char> = e.text.chars().collect();
             let readings: Vec<&str> = e.reading.split(' ').collect();
             if readings.len() != text.len() || text.len() < 2 {
@@ -820,7 +1166,8 @@ impl Engine {
     /// Chữ đầu của `keys` (tới phím cách) chỉ có phụ âm, chưa có nguyên âm (`t`, `ngh`).
     fn typed_initial_only(&self, keys: &str) -> bool {
         let word: String = keys.chars().take_while(|&c| c != '\'').map(text::lower).collect();
-        !self.compose(&word).chars().any(|c| text::is_vowel(text::base(text::split_tone(c).0)))
+        // `qu` mới là phụ âm đầu (u thuộc phụ âm), cột hỏi đủ nhóm c/k/qu/g/gh.
+        word == "qu" || !self.compose(&word).chars().any(|c| text::is_vowel(text::base(text::split_tone(c).0)))
     }
 
     /// Từ điển có âm nào bắt đầu đúng bằng phụ âm đầu `initial` không (`g` không tính gà của `gh`, `gi`).
@@ -871,12 +1218,15 @@ impl Engine {
         if initial == "g" && letters.get(1) == Some(&'i') {
             initial = "gi".into();
         }
-        // q luôn đi với u: phụ âm đầu là qu, nên đổi sang phụ âm khác thì bỏ u (`qua` → ca, ka, ga, gha).
-        if initial == "q" && letters.get(1) == Some(&'u') {
+        // q luôn đi với u: phụ âm đầu là qu, nên đổi sang phụ âm khác thì bỏ u (`qua` → ca, ka, ga, gha). Chưa gõ u
+        // (`q`, gõ tắt `qg`) thì phụ âm đầu cũng là qu, cột hiện qu chứ không phải q (người dùng muốn 2026-11-14);
+        // phím vẫn giữ là `q`.
+        let q_alone = initial == "q" && letters.get(1) != Some(&'u');
+        if initial == "q" {
             initial = "qu".into();
         }
         let i_is_vowel = initial == "gi" && !letters.iter().skip(2).any(|&c| text::is_vowel(c));
-        let skip = if i_is_vowel { 1 } else { initial.chars().count() };
+        let skip = if i_is_vowel || q_alone { 1 } else { initial.chars().count() };
         let body: String = letters.iter().skip(skip).map(|&c| text::base(c)).collect();
         if !body.chars().all(|c| c.is_ascii_lowercase()) {
             return Vec::new();
@@ -891,12 +1241,18 @@ impl Engine {
             }
         };
         let typed = if i_is_vowel { "g" } else { initial.as_str() };
-        let mut out = vec![(typed.to_string(), format!("{}{body}", key_of(typed)))];
+        let typed_key = if q_alone { "q".to_string() } else { key_of(typed) };
+        let mut out = vec![(typed.to_string(), format!("{typed_key}{body}"))];
         // Phụ âm có thể ở nhiều nhóm (v ở d/đ/gi/r/v và g/gh/v): lấy mọi phụ âm cùng nhóm với nó.
         let mut mates: Vec<&str> = Vec::new();
         for &m in INITIAL_GROUPS.iter().filter(|g| g.contains(&initial.as_str())).flat_map(|g| g.iter()) {
             if m != initial && !mates.contains(&m) {
                 mates.push(m);
+            }
+        }
+        if let Some(&(_, extra)) = INITIAL_EXTRAS.iter().find(|(from, _)| *from == initial) {
+            if !mates.contains(&extra) {
+                mates.push(extra);
             }
         }
         for g in mates {
@@ -916,9 +1272,9 @@ impl Engine {
         out
     }
 
-    /// Lọc `rows` theo các lựa chọn `picked` của [`Self::narrow`], mỗi chữ một lần.
+    /// Lọc `rows` theo các lựa chọn `picked` của [`Self::narrow`]. Chữ nhiều âm giữ mọi âm khớp (牟 mâu, mầu: cột
+    /// thanh phải có mầu); lưới bỏ trùng ở [`Self::candidates_narrowed`].
     fn narrowed_from(&self, rows: Vec<(Candidate, [String; 5])>, picked: &[(Part, String)]) -> Vec<(Candidate, [String; 5])> {
-        let mut shown = HashSet::new();
         // Phụ âm đầu không có âm nào dùng đúng nó (chữ cái vừa gõ `q`, xem [`Self::narrow`]) khớp mọi phụ âm
         // đầu bắt đầu bằng nó (qu).
         let exact: HashSet<String> = rows.iter().map(|(_, parts)| parts[0].clone()).collect();
@@ -928,7 +1284,6 @@ impl Engine {
         };
         rows.into_iter()
             .filter(|(_, parts)| picked.iter().all(|(p, v)| matches(*p, v, parts)))
-            .filter(|(c, _)| shown.insert(c.text.clone()))
             .collect()
     }
 
@@ -984,12 +1339,13 @@ impl Engine {
             let mut options: Vec<String> =
                 rows.iter().map(|(_, parts)| parts[level].clone()).filter(|v| seen.insert(v.clone())).collect();
             // Hỏi phụ âm đầu ngay từ chữ cái đầu: chữ cái vừa gõ không tự là phụ âm đầu thì cũng là một lựa chọn
-            // (`q` → q, qu; `p` → p, ph), trừ khi đã gõ đủ phụ âm đầu (`ph…`, `qua`).
+            // (`p` → p, ph), trừ khi đã gõ đủ phụ âm đầu (`ph…`, `qua`). Riêng `q` mặc định là qu, không có lựa chọn q
+            // (người dùng muốn 2026-11-14).
             if PARTS[level] == Part::Initial && picked.is_empty() {
                 let typed: String = keys.chars().take(1).map(text::lower).collect();
                 let lower = keys.to_lowercase();
                 let spelled = options.iter().any(|v| v.chars().count() > 1 && lower.starts_with(v.as_str()));
-                if !typed.is_empty() && typed.chars().all(|c| c.is_ascii_alphabetic()) && !seen.contains(&typed)
+                if !typed.is_empty() && typed != "q" && typed.chars().all(|c| c.is_ascii_alphabetic()) && !seen.contains(&typed)
                     && !spelled && options.iter().all(|v| !v.is_empty() && v.starts_with(&typed))
                 {
                     options.push(typed);
@@ -1007,12 +1363,25 @@ impl Engine {
                             }
                         }
                     }
+                    if let Some(&(_, extra)) = INITIAL_EXTRAS.iter().find(|(from, _)| Some(*from) == options.first().map(String::as_str)) {
+                        if !options.iter().any(|o| o == extra) && self.initial_has_words(extra) {
+                            options.push(extra.to_string());
+                        }
+                    }
                     // Gõ tắt toàn phụ âm (`ndtphn`): các phụ âm dài hơn bắt đầu bằng chữ cái đầu (ng, nh, ngh).
                     for (label, _) in self.loose_words(keys) {
                         if !options.contains(&label) && self.initial_has_words(&label) {
                             options.push(label);
                         }
                     }
+                }
+            }
+            // Ít vần (không quá [`MERGED_RHYMES`]): hỏi thẳng vần, khỏi hỏi nguyên âm trước (chạm a rồi lại thấy a, ai,
+            // ao… trông như lặp; người dùng duyệt 2026-11-14).
+            if PARTS[level] == Part::Vowel && !self.always_ask_vowel {
+                let rhymes: HashSet<&str> = rows.iter().map(|(_, parts)| parts[Part::Nucleus as usize].as_str()).collect();
+                if rhymes.len() <= MERGED_RHYMES {
+                    continue;
                 }
             }
             // Vần không thể có phụ âm cuối (vần đôi ôi, ai, âu…; chỉ còn lựa chọn rỗng): khỏi hỏi phụ âm cuối.
@@ -1059,9 +1428,868 @@ impl Engine {
         None
     }
 
-    /// Các gợi ý cho `keys` có âm tiết đầu khớp mọi lựa chọn `picked` của [`Self::narrow`].
+    /// Các gợi ý cho `keys` có âm tiết đầu khớp mọi lựa chọn `picked` của [`Self::narrow`], mỗi chữ một lần.
     pub fn candidates_narrowed(&self, keys: &str, picked: &[(Part, String)]) -> Vec<Candidate> {
-        self.narrowed(keys, picked).into_iter().map(|(c, _)| c).collect()
+        let mut shown = HashSet::new();
+        self.narrowed(keys, picked).into_iter().map(|(c, _)| c).filter(|c| shown.insert(c.text.clone())).collect()
+    }
+
+    /// Các cụm (có trong từ điển) cho `keys` mà âm thứ `i` khớp `locks[i]` (các âm đã chốt tương đối ở cột trái, theo
+    /// lựa chọn lúc chốt: "ph…", "phá…", hay rỗng là theo phím đã gõ) và âm kế tiếp khớp `picked`. Phụ âm đầu chỉ lỏng
+    /// trong nhóm ch/tr (chọn tr vẫn có ch, xếp sau; người dùng muốn 2026-11-14). Kèm các phần của âm kế tiếp.
+    /// Mỗi hàng: gợi ý, các phần của âm kế tiếp, và có phải chữ của phụ âm cùng nhóm ch/tr thay phím đã gõ không.
+    /// `before`: chữ đã chọn dở trước đó (政): các chữ nối tiếp nó thành cụm ([`Self::after`], 政 + tr… → 治 của 政治)
+    /// đứng đầu. Chữ / cụm vừa đủ các âm đã chốt (không còn âm kế tiếp, phần âm kế tiếp là `None`) cũng có, khi chưa chọn
+    /// gì cho âm kế tiếp.
+    fn locked_rows(
+        &self,
+        keys: &str,
+        before: &str,
+        locks: &[Vec<(Part, String)>],
+        picked: &[(Part, String)],
+    ) -> std::sync::Arc<Vec<LockedRow>> {
+        let id = format!("{keys}\u{0}{before}\u{0}{locks:?}\u{0}{picked:?}\u{0}{:?}\u{0}{}", self.options, self.dict.entries().len());
+        if let Ok(cache) = self.narrow_cache.locked.lock() {
+            if let Some((_, rows)) = cache.iter().find(|(k, _)| *k == id) {
+                return rows.clone();
+            }
+        }
+        let rows = std::sync::Arc::new(self.locked_rows_uncached(keys, before, locks, picked));
+        if let Ok(mut cache) = self.narrow_cache.locked.lock() {
+            cache.retain(|(k, _)| *k != id);
+            cache.push((id, rows.clone()));
+            if cache.len() > NARROW_CACHE_SIZE {
+                cache.remove(0);
+            }
+        }
+        rows
+    }
+
+    /// [`Self::locked_rows`] không qua bộ nhớ đệm.
+    fn locked_rows_uncached(
+        &self,
+        keys: &str,
+        before: &str,
+        locks: &[Vec<(Part, String)>],
+        picked: &[(Part, String)],
+    ) -> Vec<LockedRow> {
+        let k = locks.len();
+        let chars: Vec<char> = keys.chars().collect();
+        // (gợi ý, phần âm kế tiếp, là chữ của phụ âm cùng nhóm ch/tr thay phím đã gõ, số phần khớp lỏng, nối tiếp chữ
+        // đã chọn, độ phổ biến, thứ tự)
+        let mut rows: Vec<(Candidate, Option<[String; 5]>, bool, usize, bool, u32, usize)> = Vec::new();
+        let mut seen = HashSet::new();
+        let mut locked_seen: std::collections::HashMap<String, Option<usize>> = std::collections::HashMap::new();
+        // Đoạn âm thứ i chỉ là phím `w` (âm bắt đầu bằng ư), cho [`part_matches_at`].
+        let w_at = self.w_chunks(&chars, k + 1);
+        // Lọc từng nguồn: tách âm lần lượt, âm nào không khớp thì bỏ chữ đó ngay (nguồn có cả nghìn cụm, phần lớn hỏng
+        // ngay âm đầu).
+        let mut collect = |source: &[(Candidate, u32, Rank)], swapped: bool, follow: bool, rows: &mut Vec<_>| {
+            for (c, freq, (_, order)) in source {
+                if c.joined || dict::is_shortcut(&c.reading) || !seen.insert((c.text.clone(), c.reading.clone())) {
+                    continue;
+                }
+                let count = c.reading.split(' ').count();
+                if count < k || (count == k && !picked.is_empty()) {
+                    continue;
+                }
+                let mut loose = 0;
+                let fits = |i: usize, want: &[(Part, String)], parts: &[String; 5], loose: &mut usize| {
+                    want.iter().all(|(p, v)| match part_matches_at(*p, v, parts, w_at[i]) {
+                        Some(l) => {
+                            *loose += usize::from(l);
+                            true
+                        }
+                        None => false,
+                    })
+                };
+                // Các âm đã chốt: nhiều cụm (câu ghép) chung phần đầu, nên nhớ kết quả theo phần âm đọc của các âm đó.
+                let head_end = c.reading.match_indices(' ').nth(k.wrapping_sub(1)).map_or(c.reading.len(), |(i, _)| i);
+                let head = if k == 0 { "" } else { &c.reading[..head_end] };
+                let locked = match locked_seen.get(head) {
+                    Some(r) => *r,
+                    None => {
+                        let mut l = 0;
+                        let mut words = head.split(' ');
+                        let ok = locks.iter().enumerate().all(|(i, want)| {
+                            words.next().and_then(syllable_split).is_some_and(|parts| fits(i, want, &parts, &mut l))
+                        });
+                        let r = ok.then_some(l);
+                        locked_seen.insert(head.to_string(), r);
+                        r
+                    }
+                };
+                let Some(l) = locked else { continue };
+                loose += l;
+                let mut words = c.reading.split(' ').skip(k);
+                let next = match words.next() {
+                    None => None,
+                    Some(w) => match syllable_split(w) {
+                        Some(parts) if fits(k, picked, &parts, &mut loose) => Some(parts),
+                        _ => continue,
+                    },
+                };
+                // Các âm sau âm kế tiếp cũng phải là âm tiếng Việt.
+                if words.any(|w| syllable_split(w).is_none()) {
+                    continue;
+                }
+                // Chữ thay phím đã gõ chỉ lấy phụ âm cùng nhóm ch/tr.
+                if swapped && !next.as_ref().is_some_and(|parts| CH_TR.contains(&parts[0].as_str())) {
+                    continue;
+                }
+                rows.push((c.clone(), next, swapped, loose, follow, *freq, *order));
+            }
+        };
+        if !before.is_empty() {
+            let follow: Vec<(Candidate, u32, Rank)> = self
+                .after_in(before, keys, true)
+                .into_iter()
+                .enumerate()
+                .map(|(i, (c, text, reading))| (c, self.dict.freq_of(&text, &reading).unwrap_or(0), (true, i)))
+                .collect();
+            collect(&follow, false, true, &mut rows);
+        }
+        let (joined, swapped) = self.locked_join(&chars, locks);
+        collect(&joined, false, false, &mut rows);
+        collect(&self.locked_source(keys), false, false, &mut rows);
+        collect(&swapped, true, false, &mut rows);
+        // Câu ghép (từ điển không có cả cụm, [`Self::locked_composed`]) xếp sau mọi cụm có sẵn. Riêng khi âm kế tiếp đã
+        // gõ có nguyên âm (`m…` + `nam`): câu ghép kèm âm đó xếp theo số phím phủ được như cụm có sẵn, trước các chữ chỉ
+        // của âm đã chốt (người dùng muốn 2026-11-14: tự biết có chữ nam). Câu phủ hết phím (còn nhiều âm chưa chốt)
+        // xếp như cụm có sẵn.
+        let specific = self
+            .syllable_chunks(keys)
+            .get(k)
+            .is_some_and(|&(s, e)| chars[s..e].iter().any(|c| "aeiouy".contains(text::lower(*c))));
+        let (composed, composed_swapped, full) = self.locked_composed(&chars, locks, picked);
+        collect(&full, false, false, &mut rows);
+        let ranked = rows.len();
+        collect(&composed, false, false, &mut rows);
+        collect(&composed_swapped, true, false, &mut rows);
+        for row in &mut rows[ranked..] {
+            if !(specific && row.1.is_some()) {
+                row.6 += 1 << 24;
+            }
+        }
+        rows.sort_by(|a, b| {
+            // Khớp đúng lựa chọn trước khớp lỏng; rồi chữ nối tiếp chữ đã chọn; rồi chữ khớp phím đã gõ trước chữ của
+            // phụ âm cùng nhóm thay phím; rồi phủ nhiều phím, phổ biến hơn.
+            let composed = |r: &(Candidate, Option<[String; 5]>, bool, usize, bool, u32, usize)| r.6 >= 1 << 24;
+            (a.3, !a.4, a.2, composed(a))
+                .cmp(&(b.3, !b.4, b.2, composed(b)))
+                .then(b.0.consumed.cmp(&a.0.consumed))
+                .then(b.5.cmp(&a.5))
+                .then(a.6.cmp(&b.6))
+        });
+        rows.into_iter().map(|(c, parts, swapped, ..)| (c, parts, swapped)).collect()
+    }
+
+    /// Các đoạn âm của chuỗi phím (vị trí ký tự `[đầu, cuối)`), cho chốt âm ở cột trái: mỗi đoạn là một âm. Đoạn giữa
+    /// hai dấu tách `'` ghép được thành một âm (`nguowif`) là một âm; không thì phụ âm kèm các nguyên âm ngay sau là
+    /// một âm, chữ cái gõ tắt đứng một mình là một âm (`c`, `m`; `dd` là đ), kể cả `w` (âm bắt đầu bằng ư, như
+    /// [`plain_segment`]). `twcmn` → t, w, c, m, n (trung ương cục miền nam).
+    pub fn syllable_chunks(&self, keys: &str) -> Vec<(usize, usize)> {
+        Self::syllable_chunks_with(&self.options, keys)
+    }
+
+    /// [`Self::syllable_chunks`] chỉ theo kiểu gõ `options` (không cần từ điển), để bàn phím gọi được mà không phải chờ
+    /// lõi đang tra gợi ý ở luồng khác.
+    pub fn syllable_chunks_with(options: &Options, keys: &str) -> Vec<(usize, usize)> {
+        let is_vietnamese = |s: &str| if options.telex { telex::is_vietnamese_telex(s) } else { telex::is_vietnamese(s, options.dz) };
+        let chars: Vec<char> = keys.chars().map(text::lower).collect();
+        let vowel = |c: char| "aeiouy".contains(c);
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '\'' {
+                i += 1;
+                continue;
+            }
+            let end = chars[i..].iter().position(|&c| c == '\'').map_or(chars.len(), |p| i + p);
+            let piece: String = chars[i..end].iter().collect();
+            let one = piece.chars().any(vowel) && is_vietnamese(&piece) && telex::telex_words(&piece).len() == 1;
+            if one || !chars[i].is_ascii_alphabetic() {
+                out.push((i, end));
+                i = end;
+                continue;
+            }
+            let mut j = i;
+            while j < end && chars[j].is_ascii_alphabetic() && !vowel(chars[j]) {
+                j += 1;
+            }
+            // Chuỗi phụ âm trước nguyên âm: chỉ phần đuôi dài nhất làm được phụ âm đầu đi với nguyên âm (`twcmi` → t, w,
+            // c, mi; `bngi` → b, ngi), các chữ cái trước đó mỗi chữ một âm, để gõ tiếp không làm đổi các âm trước
+            // (âm đã chốt ở cột trái giữ nguyên; người dùng muốn 2026-11-14).
+            if j < end && vowel(chars[j]) && j > i {
+                let initial = |s: &[char]| {
+                    let s: String = s.iter().collect();
+                    s == "q" || s == "dd" || VALID_INITIALS.contains(&s.as_str())
+                };
+                let start = (1..=3.min(j - i)).rev().map(|len| j - len).find(|&s| initial(&chars[s..j])).unwrap_or(j - 1);
+                if start > i {
+                    let len = if chars[i] == 'd' && i + 1 < start && chars[i + 1] == 'd' { 2 } else { 1 };
+                    out.push((i, i + len));
+                    i += len;
+                    continue;
+                }
+            }
+            if j < end && vowel(chars[j]) {
+                while j < end && vowel(chars[j]) {
+                    j += 1;
+                }
+                out.push((i, j));
+                i = j;
+            } else {
+                let len = if chars[i] == 'd' && i + 1 < end && chars[i + 1] == 'd' { 2 } else { 1 };
+                out.push((i, i + len));
+                i += len;
+            }
+        }
+        out
+    }
+
+    /// Cụm cho [`Self::locked_rows`] ghép thẳng theo chữ cái đầu ([`Dictionary::lookup_initials`]): các âm đã chốt theo
+    /// lựa chọn lúc chốt (chưa chọn phụ âm đầu thì theo phím của đoạn đó), các âm sau theo phím từng đoạn
+    /// ([`Self::syllable_chunks`]) như gõ tắt không chặt (`c` khớp c, ch…). Âm kế tiếp gõ c hay t thì lấy cả chữ của phụ
+    /// âm kia trong nhóm ch/tr (trả riêng, xếp sau).
+    fn locked_join(&self, chars: &[char], locks: &[Vec<(Part, String)>]) -> (Vec<(Candidate, u32, Rank)>, Vec<(Candidate, u32, Rank)>) {
+        let keys: String = chars.iter().collect();
+        let chunks = self.syllable_chunks(&keys);
+        let k = locks.len();
+        let (mut plain, mut swapped) = (Vec::new(), Vec::new());
+        if chunks.len() < k {
+            return (plain, swapped);
+        }
+        // Chữ cái của đoạn (`dd` → đ), để so như gõ tắt.
+        let letters = |&(s, e): &(usize, usize)| -> Vec<char> {
+            let raw: Vec<char> = chars[s..e].iter().map(|&c| text::lower(c)).collect();
+            if raw == ['d', 'd'] { vec!['đ'] } else { raw }
+        };
+        // Chữ cái đầu của âm trong chỉ mục (bỏ dấu: đ → d, ư → u).
+        let head = |c: char| match c {
+            'w' => 'u',
+            'đ' => 'd',
+            c => c,
+        };
+        let mut lead = String::new();
+        for (i, lock) in locks.iter().enumerate() {
+            let initial = lock.iter().find(|(p, _)| *p == Part::Initial).map(|(_, v)| v.clone());
+            let c = match initial {
+                Some(v) if v.is_empty() => lock.iter().find(|(p, _)| *p != Part::Initial).and_then(|(_, v)| v.chars().next()),
+                Some(v) => v.chars().next(),
+                None => letters(&chunks[i]).first().copied(),
+            };
+            let Some(c) = c else { return (plain, swapped) };
+            lead.push(head(text::fold(&c.to_string()).chars().next().unwrap_or(c)));
+        }
+        for m in 0..=chunks.len() - k {
+            let s = k + m;
+            if s < 2 {
+                continue;
+            }
+            let end = {
+                let mut e = chunks[s - 1].1;
+                while chars.get(e) == Some(&'\'') {
+                    e += 1;
+                }
+                e
+            };
+            let rest: Vec<Vec<char>> = chunks[k..s].iter().map(letters).collect();
+            let tail: String = rest.iter().filter_map(|l| l.first().map(|&c| head(c))).collect();
+            // Âm kế tiếp gõ c / t: thử cả chữ cái kia (ch ↔ tr).
+            let mut variants = vec![(tail.clone(), false)];
+            if let Some(first) = tail.chars().next().filter(|c| matches!(c, 'c' | 't')) {
+                variants.push((format!("{}{}", if first == 'c' { 't' } else { 'c' }, &tail[1..]), true));
+            }
+            for (tail, swap) in variants {
+                for (order, e) in self.dict.lookup_initials(&format!("{lead}{tail}")) {
+                    let syllables = syllable_parts(&e.reading);
+                    if syllables.len() != s {
+                        continue;
+                    }
+                    // Âm đã chốt chưa chọn phụ âm đầu: theo phím của đoạn đó; đã chọn thì lựa chọn quyết định (locked_rows).
+                    let readings: Vec<&str> = e.reading.split(' ').collect();
+                    let locked_ok = locks.iter().enumerate().all(|(i, lock)| {
+                        lock.iter().any(|(p, _)| *p == Part::Initial) || self.chunk_matches(&letters(&chunks[i]), readings[i])
+                    });
+                    let rest_ok = rest.iter().enumerate().all(|(j, seg)| (swap && j == 0) || self.chunk_matches(seg, readings[k + j]));
+                    if !locked_ok || !rest_ok {
+                        continue;
+                    }
+                    let cand = Candidate { text: e.text.clone(), reading: e.reading.clone(), consumed: end, abbreviated: true, joined: false, breaks: Vec::new() };
+                    let row = (cand, self.dict.freq(order), (true, order));
+                    if swap { swapped.push(row) } else { plain.push(row) }
+                }
+            }
+        }
+        (plain, swapped)
+    }
+
+    /// `n` âm đầu của `chars`: âm nào có đoạn phím chỉ là `w` ([`part_matches_at`]).
+    fn w_chunks(&self, chars: &[char], n: usize) -> Vec<bool> {
+        let keys: String = chars.iter().collect();
+        let chunks = self.syllable_chunks(&keys);
+        (0..n).map(|i| chunks.get(i).is_some_and(|&(s, e)| e == s + 1 && text::lower(chars[s]) == 'w')).collect()
+    }
+
+    /// Đoạn phím `seg` của một âm (âm đã chốt mà chưa chọn gì, hay âm kế tiếp) khớp âm đọc `reading` không. Đoạn có
+    /// nguyên âm là chữ gõ Telex (`mieenf` → miền): khớp như chữ gõ đủ hay gõ dở, có gõ thanh thì thanh phải đúng; đoạn
+    /// toàn phụ âm như gõ tắt ([`plain_segment`]).
+    fn chunk_matches(&self, seg: &[char], reading: &str) -> bool {
+        self.chunk_matcher(seg)(reading)
+    }
+
+    /// Phần đầu khoá tra bỏ dấu ([`Dictionary::lookup_prefix`]) mà mọi âm đọc khớp đoạn phím `seg`
+    /// ([`Self::chunk_matches`]) đều có: đoạn có nguyên âm thì là chữ đã ghép Telex, bỏ dấu như khoá. Đoạn toàn phụ âm: `None` (gõ tắt, chỉ chắc chữ cái đầu).
+    fn chunk_prefix(&self, seg: &[char]) -> Option<String> {
+        if !seg.iter().any(|c| "aeiouy".contains(*c)) {
+            return None;
+        }
+        // Như khoá: y cuối sau phụ âm thành i (gõ `ky` chỉ khớp kỹ/kĩ, khoá `ki`).
+        Some(text::fold_key(&self.compose(&seg.iter().collect::<String>())))
+    }
+
+    /// [`Self::chunk_matches`] cho một đoạn so với nhiều âm đọc: ghép Telex đoạn phím một lần (trước đây ghép lại cho
+    /// từng mục từ điển, vài nghìn lần mỗi lần chốt âm).
+    fn chunk_matcher<'s>(&self, seg: &'s [char]) -> impl Fn(&str) -> bool + 's {
+        let typed = seg.iter().any(|c| "aeiouy".contains(*c)).then(|| {
+            let composed = self.compose(&seg.iter().collect::<String>()).to_lowercase();
+            let tone = composed.chars().map(|c| text::split_tone(c).1).find(|&t| t != Tone::Level).unwrap_or(Tone::Level);
+            let letters = letters_of(&composed);
+            (composed, tone, letters)
+        });
+        move |reading: &str| match &typed {
+            None => plain_segment(seg, &syllable_parts(reading)[0].0, false),
+            Some((composed, typed_tone, letters)) => {
+                if syllable_matches(composed, reading, false) {
+                    return true;
+                }
+                let tone = |s: &str| s.chars().map(|c| text::split_tone(c).1).find(|&t| t != Tone::Level).unwrap_or(Tone::Level);
+                prefix_matches(letters, &letters_of(reading)) && (*typed_tone == Tone::Level || *typed_tone == tone(reading))
+            }
+        }
+    }
+
+    /// Câu ghép cho [`Self::locked_rows`] khi từ điển không có cụm đủ các âm đã chốt cộng âm kế tiếp (`twcmn`, chốt
+    /// trung, ương, cục mà không có mục trung ương cục: 中央 + 局). Các âm đã chốt ghép từ cụm dài nhất có trong từ điển,
+    /// không có thì từng chữ (phổ biến nhất); âm kế tiếp lấy mọi chữ một âm khớp phím của đoạn đó, để cột trái vẫn hỏi
+    /// được âm đó (người dùng muốn 2026-11-14). Trả câu vừa đủ các âm đã chốt, các câu thêm âm kế tiếp, và các câu mà
+    /// âm kế tiếp là chữ của phụ âm cùng nhóm ch/tr thay phím đã gõ (xếp sau).
+    #[allow(clippy::type_complexity)]
+    fn locked_composed(
+        &self,
+        chars: &[char],
+        locks: &[Vec<(Part, String)>],
+        picked: &[(Part, String)],
+    ) -> (Vec<(Candidate, u32, Rank)>, Vec<(Candidate, u32, Rank)>, Vec<(Candidate, u32, Rank)>) {
+        let keys: String = chars.iter().collect();
+        let chunks = self.syllable_chunks(&keys);
+        let k = locks.len();
+        let (mut plain, mut swapped, mut full) = (Vec::new(), Vec::new(), Vec::new());
+        if k == 0 || chunks.len() < k {
+            return (plain, swapped, full);
+        }
+        let w_at = self.w_chunks(chars, k + 1);
+        let letters = |&(s, e): &(usize, usize)| -> Vec<char> {
+            let raw: Vec<char> = chars[s..e].iter().map(|&c| text::lower(c)).collect();
+            if raw == ['d', 'd'] { vec!['đ'] } else { raw }
+        };
+        let head = |c: char| match c {
+            'w' => 'u',
+            'đ' => 'd',
+            c => c,
+        };
+        let mut lead = Vec::new();
+        for (i, lock) in locks.iter().enumerate() {
+            let initial = lock.iter().find(|(p, _)| *p == Part::Initial).map(|(_, v)| v.clone());
+            let c = match initial {
+                Some(v) if v.is_empty() => lock.iter().find(|(p, _)| *p != Part::Initial).and_then(|(_, v)| v.chars().next()),
+                Some(v) => v.chars().next(),
+                None => letters(&chunks[i]).first().copied(),
+            };
+            let Some(c) = c else { return (plain, swapped, full) };
+            lead.push(head(text::fold(&c.to_string()).chars().next().unwrap_or(c)));
+        }
+        // Các mục khớp các âm đã chốt `i..j`, tốt nhất trước: khớp lỏng ít hơn, phổ biến hơn, đứng trước.
+        // Kết quả chỉ phụ thuộc phím, lựa chọn và cờ `w` của các âm `i..j` (cùng kiểu gõ, cùng từ điển): nhớ lại.
+        let total_entries = self.dict.entries().len();
+        let piece_id = |i: usize, j: usize| -> String {
+            let keys: Vec<Vec<char>> = chunks[i..j].iter().map(|c| letters(c)).collect();
+            format!("{keys:?}\u{0}{:?}\u{0}{:?}\u{0}{:?}", &locks[i..j], &w_at[i..j], self.options)
+        };
+        let best_uncached = |i: usize, j: usize, limit: usize| -> Vec<(usize, String, String)> {
+            let mut initials: String = lead[i..j].iter().collect();
+            // Một âm chưa chọn phụ âm đầu: tra theo phần đầu khoá của chữ đã gõ ([`Self::chunk_prefix`]), khỏi duyệt mọi
+            // chữ cùng chữ cái đầu.
+            if j - i == 1 {
+                let narrower = match locks[i].iter().find(|(p, _)| *p == Part::Initial) {
+                    None => self.chunk_prefix(&letters(&chunks[i])),
+                    Some((_, v)) => initial_prefix(v),
+                };
+                if let Some(p) = narrower.filter(|p| p.starts_with(&initials)) {
+                    initials = p;
+                }
+            }
+            let entries: Vec<(usize, &Entry)> =
+                if j - i == 1 { self.dict.lookup_prefix(&initials).collect() } else { self.dict.lookup_initials(&initials).collect() };
+            let mut top: Vec<((usize, std::cmp::Reverse<u32>, usize), &Entry)> = Vec::new();
+            let segs: Vec<Vec<char>> = chunks[i..j].iter().map(|c| letters(c)).collect();
+            let matchers: Vec<_> = segs.iter().map(|seg| self.chunk_matcher(seg)).collect();
+            for (order, e) in entries {
+                if dict::is_shortcut(&e.reading) {
+                    continue;
+                }
+                let readings: Vec<&str> = e.reading.split(' ').collect();
+                if readings.len() != j - i {
+                    continue;
+                }
+                let mut loose = 0;
+                let ok = readings.iter().enumerate().all(|(n, r)| {
+                    let Some(parts) = syllable_split(r) else { return false };
+                    let lock = &locks[i + n];
+                    let typed = lock.iter().any(|(p, _)| *p == Part::Initial)
+                        || matchers[n](r);
+                    typed
+                        && lock.iter().all(|(p, v)| match part_matches_at(*p, v, &parts, w_at[i + n]) {
+                            Some(l) => {
+                                loose += usize::from(l);
+                                true
+                            }
+                            None => false,
+                        })
+                });
+                if ok {
+                    top.push(((loose, std::cmp::Reverse(self.dict.freq(order)), order), e));
+                }
+            }
+            top.sort_by(|a, b| a.0.cmp(&b.0));
+            top.into_iter().take(limit).map(|((loose, ..), e)| (loose, e.text.clone(), e.reading.clone())).collect()
+        };
+        // Nhớ cả danh sách đã xếp (mọi mục), trả `limit` mục đầu: một đoạn hỏi với giới hạn khác nhau chỉ tính một lần.
+        let best_limited = |i: usize, j: usize, limit: usize| -> Vec<(usize, String, String)> {
+            let id = piece_id(i, j);
+            if let Ok(cache) = self.narrow_cache.pieces.lock() {
+                if cache.0 == total_entries {
+                    if let Some(found) = cache.1.get(&id) {
+                        return found.iter().take(limit).cloned().collect();
+                    }
+                }
+            }
+            let found = best_uncached(i, j, usize::MAX);
+            let out = found.iter().take(limit).cloned().collect();
+            if let Ok(mut cache) = self.narrow_cache.pieces.lock() {
+                if cache.0 != total_entries || cache.1.len() > PIECE_CACHE_SIZE {
+                    *cache = (total_entries, std::collections::HashMap::new());
+                }
+                cache.1.insert(id, found);
+            }
+            out
+        };
+        let best = |i: usize, j: usize| best_limited(i, j, LOCKED_CHOICES);
+        // Có cụm nào mang đúng các chữ cái đầu của các âm `i..j` không (tra nhanh, trước khi dựng khoá nhớ của
+        // [`best_limited`]): tách đoạn thử mọi độ dài cụm cho mỗi âm, ~40 âm đã chốt là ~800 lần thử (đo 2026-11-16:
+        // ~30 ms mỗi lần chốt / bỏ chốt âm trên máy tính). Không có thì `best` cũng rỗng.
+        let may_have = |i: usize, j: usize| j - i == 1 || self.dict.lookup_initials(&lead[i..j].iter().collect::<String>()).next().is_some();
+        // Tách các âm đã chốt thành đoạn: cụm dài nhất có trong từ điển, không có thì từng chữ; mỗi đoạn giữ vài mục
+        // tốt nhất, để chữ của âm đã chốt cũng đổi được (cục: 局, 侷, 鋦…; người dùng muốn 2026-11-14).
+        let mut pieces = Vec::new();
+        let mut i = 0;
+        while i < k {
+            let Some((j, options)) = (i + 1..=k).rev().filter(|&j| may_have(i, j)).find_map(|j| Some((j, best(i, j))).filter(|(_, o)| !o.is_empty())) else {
+                return (plain, swapped, full);
+            };
+            pieces.push(options);
+            i = j;
+        }
+        // Ghép các đoạn, giữ [`LOCKED_PREFIXES`] cách ghép tốt nhất: ít khớp lỏng, rồi tổng thứ hạng trong đoạn nhỏ.
+        let mut prefixes: Vec<((usize, usize), String, Vec<String>)> = vec![((0, 0), String::new(), Vec::new())];
+        for options in &pieces {
+            let mut grown = Vec::new();
+            for ((loose, rank), text, reading) in &prefixes {
+                for (n, (l, t, r)) in options.iter().enumerate() {
+                    let mut reading = reading.clone();
+                    reading.push(r.clone());
+                    grown.push(((loose + l, rank + n), format!("{text}{t}"), reading));
+                }
+            }
+            grown.sort_by(|a, b| a.0.cmp(&b.0));
+            grown.truncate(LOCKED_PREFIXES);
+            prefixes = grown;
+        }
+        let prefixes: Vec<(String, String)> = prefixes.into_iter().map(|(_, t, r)| (t, r.join(" "))).collect();
+        // Mọi chữ của âm đã chốt đầu tiên (không chỉ vài chữ tốt nhất), mỗi chữ ghép với chữ tốt nhất của các âm sau,
+        // xếp sau các cách ghép trên: chọn được cả chữ ít dùng (lăng → 陵) rồi chọn tiếp các âm sau như pinyin (người
+        // dùng muốn 2026-11-15).
+        let mut extra: Vec<(String, String)> = Vec::new();
+        let mut rest: Option<(String, Vec<String>)> = Some((String::new(), Vec::new()));
+        let mut i = 1;
+        while i < k {
+            let Some((j, options)) = (i + 1..=k).rev().filter(|&j| may_have(i, j)).find_map(|j| Some((j, best(i, j))).filter(|(_, o)| !o.is_empty())) else {
+                rest = None;
+                break;
+            };
+            if let (Some((t, r)), Some((_, ot, or))) = (rest.as_mut(), options.first()) {
+                t.push_str(ot);
+                r.push(or.clone());
+            }
+            i = j;
+        }
+        if let Some((rest_text, rest_reading)) = rest {
+            let mut taken: HashSet<String> = prefixes.iter().map(|(p, _)| p.clone()).collect();
+            for (_, t, r) in best_limited(0, 1, usize::MAX) {
+                let text = format!("{t}{rest_text}");
+                if !taken.insert(text.clone()) {
+                    continue;
+                }
+                let reading = std::iter::once(r).chain(rest_reading.iter().cloned()).collect::<Vec<_>>().join(" ");
+                extra.push((text, reading));
+            }
+        }
+        let end_of = |n: usize| {
+            let mut e = chunks[n].1;
+            while chars.get(e) == Some(&'\'') {
+                e += 1;
+            }
+            e
+        };
+        let total = self.dict.entries().len();
+        let cand = |t: String, r: String, consumed: usize| Candidate { text: t, reading: r, consumed, abbreviated: true, joined: false, breaks: Vec::new() };
+        // Thứ tự câu ghép: tổng thứ hạng của cách ghép các âm đã chốt và của chữ âm kế tiếp (độ phổ biến 0, xếp theo
+        // thứ tự này).
+        let rank = |p: usize, n: usize| (true, total + (p + n) * LOCKED_PREFIXES + p);
+        for (p, (text, reading)) in prefixes.iter().chain(&extra).enumerate() {
+            plain.push((cand(text.clone(), reading.clone(), end_of(k - 1)), 0, rank(p, 0)));
+        }
+        // Còn từ hai âm chưa chốt trở lên (`twcmn` chốt trung, ương, cục; còn m, n): câu phủ hết phím đã gõ, các âm chưa
+        // chốt ghép như gõ thường ([`Self::candidates`]: cụm có sẵn, không thì câu ghép chữ thông dụng), đứng trước
+        // (người dùng muốn 2026-11-15: 中央局 + mn hiện câu 5 chữ trước).
+        if chunks.len() > k + 1 {
+            let rest: String = chars[chunks[k].0..].iter().collect();
+            let len = rest.chars().count();
+            let fits_picked = |reading: &str| {
+                reading.split(' ').next().and_then(syllable_split).is_some_and(|parts| {
+                    picked.iter().all(|(p, v)| part_matches_at(*p, v, &parts, w_at[k]).is_some())
+                })
+            };
+            let tails: Vec<Candidate> = self
+                .candidates(&rest)
+                .into_iter()
+                .filter(|c| c.consumed == len && !dict::is_shortcut(&c.reading) && fits_picked(&c.reading))
+                .take(LOCKED_FULL)
+                .collect();
+            for (n, tail) in tails.iter().enumerate() {
+                for (p, (text, reading)) in prefixes.iter().enumerate() {
+                    let row = cand(format!("{text}{}", tail.text), format!("{reading} {}", tail.reading), chars.len());
+                    full.push((row, 0, (true, total + p * LOCKED_FULL + n)));
+                }
+            }
+        }
+        let Some(next) = chunks.get(k) else { return (plain, swapped, full) };
+        let seg = letters(next);
+        let Some(&first) = seg.first() else { return (plain, swapped, full) };
+        let consumed = end_of(k);
+        let first = head(first);
+        let mut variants = vec![(first, false)];
+        if matches!(first, 'c' | 't') {
+            variants.push((if first == 'c' { 't' } else { 'c' }, true));
+        }
+        let matches_seg = self.chunk_matcher(&seg);
+        // Chữ thay phím thì tra theo ch / tr; không thì theo phần đầu khoá của chữ đã gõ ([`Self::chunk_prefix`]).
+        let typed_prefix = self.chunk_prefix(&seg);
+        let picked_initial = picked.iter().find(|(p, _)| *p == Part::Initial).and_then(|(_, v)| initial_prefix(v));
+        // Đã chọn ở cột trái một phụ âm cùng nhóm khác phụ âm đã gõ ([`Self::locked_mates`]): chữ của phụ âm đó thay
+        // cho chữ khớp phím (`laf` chọn n: nà…), trừ ch / tr đã có ở dưới (chữ thay phím).
+        let full_seg = seg.iter().any(|c| "aeiouy".contains(*c));
+        let typed_initial = if full_seg {
+            syllable_split(&self.compose(&seg.iter().collect::<String>()).to_lowercase()).map(|p| p[0].clone())
+        } else {
+            None
+        };
+        let mate = picked.iter().find(|(p, _)| *p == Part::Initial).map(|(_, v)| v.clone()).filter(|v| {
+            let swap = CH_TR.contains(&v.as_str()) && matches!(first, 'c' | 't');
+            !v.is_empty()
+                && !swap
+                && match &typed_initial {
+                    Some(t) => v != t,
+                    None => !text::fold(v).starts_with(first),
+                }
+        });
+        if let Some(v) = mate {
+            let matcher = if full_seg { self.mate_matcher(&seg, &v) } else { None };
+            let mut chars_next: Vec<(u32, usize, &Entry)> = Vec::new();
+            let mate_prefix = if full_seg { self.mate_prefix(&seg, &v) } else { text::fold(&v) };
+            for (order, e) in self.dict.lookup_prefix(&mate_prefix) {
+                if dict::is_shortcut(&e.reading) || e.reading.contains(' ') {
+                    continue;
+                }
+                let ok = match &matcher {
+                    Some(m) => m(&e.reading),
+                    None => !full_seg && syllable_split(&e.reading).is_some_and(|p| p[0] == v),
+                };
+                let wanted = || {
+                    syllable_split(&e.reading)
+                        .is_some_and(|parts| picked.iter().all(|(p, val)| part_matches_at(*p, val, &parts, w_at[k]).is_some()))
+                };
+                if ok && wanted() {
+                    chars_next.push((self.dict.freq(order), order, e));
+                }
+            }
+            chars_next.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            for (n, (_, _, e)) in chars_next.iter().enumerate() {
+                for (p, (text, reading)) in prefixes.iter().enumerate() {
+                    if p > 0 && n >= LOCKED_NEXT {
+                        break;
+                    }
+                    plain.push((cand(format!("{text}{}", e.text), format!("{reading} {}", e.reading), consumed), 0, rank(p, n)));
+                }
+            }
+            return (plain, swapped, full);
+        }
+        for (letter, swap) in variants {
+            let prefix = match (&typed_prefix, swap) {
+                (_, true) => if letter == 't' { "tr".to_string() } else { "ch".to_string() },
+                (Some(p), false) if p.starts_with(letter) => p.clone(),
+                _ => picked_initial.clone().filter(|p| p.starts_with(letter)).unwrap_or_else(|| letter.to_string()),
+            };
+            let mut chars_next: Vec<(u32, usize, &Entry)> = Vec::new();
+            for (order, e) in self.dict.lookup_prefix(&prefix) {
+                if dict::is_shortcut(&e.reading) || e.reading.contains(' ') {
+                    continue;
+                }
+                let ok = if swap {
+                    syllable_split(&e.reading).is_some_and(|p| CH_TR.contains(&p[0].as_str()))
+                } else {
+                    matches_seg(&e.reading)
+                };
+                // Lựa chọn của âm kế tiếp lọc luôn ở đây, khỏi ghép rồi mới bỏ.
+                let wanted = || syllable_split(&e.reading).is_some_and(|parts| picked.iter().all(|(p, v)| part_matches_at(*p, v, &parts, w_at[k]).is_some()));
+                if ok && wanted() {
+                    chars_next.push((self.dict.freq(order), order, e));
+                }
+            }
+            chars_next.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            for (n, (_, _, e)) in chars_next.iter().enumerate() {
+                for (p, (text, reading)) in prefixes.iter().enumerate() {
+                    // Cách ghép phụ (chữ khác của âm đã chốt) chỉ đi với các chữ đầu của âm kế tiếp, cho đỡ chậm.
+                    if p > 0 && n >= LOCKED_NEXT {
+                        break;
+                    }
+                    let row = (cand(format!("{text}{}", e.text), format!("{reading} {}", e.reading), consumed), 0, rank(p, n));
+                    if swap { swapped.push(row) } else { plain.push(row) }
+                }
+            }
+        }
+        (plain, swapped, full)
+    }
+
+    /// Các cụm cho [`Self::locked_rows`]: như [`Self::ranked_readings`], cộng gõ tắt không chặt (chữ cái khớp cả phụ âm
+    /// dài hơn: `p` → ph) cho mọi đoạn đầu của chuỗi phụ âm, vì phụ âm đầu đã chốt theo lựa chọn ở cột trái.
+    fn locked_source(&self, keys: &str) -> std::sync::Arc<Vec<(Candidate, u32, Rank)>> {
+        // Không phụ thuộc các âm đã chốt: mỗi lần chốt thêm một âm dùng lại (vài nghìn cụm, mỗi lần tính mất chục ms).
+        let id = format!("{keys}\u{0}{:?}\u{0}{}", self.options, self.dict.entries().len());
+        if let Ok(cache) = self.narrow_cache.source.lock() {
+            if let Some((k, found)) = cache.as_ref() {
+                if *k == id {
+                    return found.clone();
+                }
+            }
+        }
+        let found = std::sync::Arc::new(self.locked_source_uncached(keys));
+        if let Ok(mut cache) = self.narrow_cache.source.lock() {
+            *cache = Some((id, found.clone()));
+        }
+        found
+    }
+
+    /// [`Self::locked_source`] không qua bộ nhớ đệm.
+    fn locked_source_uncached(&self, keys: &str) -> Vec<(Candidate, u32, Rank)> {
+        let mut seen = HashSet::new();
+        let mut found = Vec::new();
+        if self.options.telex && is_initials_only(keys) {
+            let chars: Vec<char> = keys.chars().collect();
+            for end in (2..=chars.len().min(MAX_ABBREVIATION)).rev() {
+                self.abbreviations(&chars[..end].iter().collect::<String>(), false, &mut seen, &mut found);
+            }
+        }
+        // Đã xếp hạng: giữ thứ hạng làm thứ tự (sau gõ tắt ở trên khi cùng độ phổ biến).
+        let total = self.dict.entries().len();
+        for (i, c) in self.ranked_readings(keys).into_iter().enumerate() {
+            let freq = self.dict.freq_of(&c.text, &c.reading).unwrap_or(0);
+            if seen.insert((c.text.clone(), c.consumed, c.reading.clone())) {
+                found.push((c, freq, (true, total + i)));
+            }
+        }
+        found
+    }
+
+    /// Chữ cái của đoạn âm thứ `k` của `keys` ([`Self::syllable_chunks`]), chữ thường; đoạn chỉ là `dd` thì là đ.
+    fn next_segment(&self, keys: &str, k: usize) -> Option<Vec<char>> {
+        let chars: Vec<char> = keys.chars().collect();
+        let &(s, e) = self.syllable_chunks(keys).get(k)?;
+        let raw: Vec<char> = chars[s..e].iter().map(|&c| text::lower(c)).collect();
+        Some(if raw == ['d', 'd'] { vec!['đ'] } else { raw })
+    }
+
+    /// Phụ âm đầu cùng nhóm ([`INITIAL_GROUPS`], [`INITIAL_EXTRAS`]) cho âm kế tiếp sau các âm đã chốt, ngoài các phụ
+    /// âm `have` đã có chữ: đoạn phím `seg` gõ đủ âm thì chỉ phụ âm nào thay vào còn ra chữ ([`Self::mate_matcher`]),
+    /// như cột của âm đầu ([`Self::loose_words`]); chỉ gõ phụ âm đầu thì mọi phụ âm cùng nhóm với các phụ âm đã có mà
+    /// từ điển có chữ. Chỉ kiểm tra có chữ hay không, không dựng chữ (khỏi chậm lúc chốt); chọn phụ âm nào mới tra chữ.
+    fn locked_mates(&self, seg: &[char], have: &[String]) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let add = |m: &str, out: &mut Vec<String>| {
+            if !have.iter().any(|h| h == m) && !out.iter().any(|o| o == m) {
+                out.push(m.to_string());
+            }
+        };
+        if full_syllable_keys(seg) {
+            let word: String = seg.iter().collect();
+            for (label, _) in self.loose_words(&word).into_iter().skip(1) {
+                let id = format!("mate\u{0}{word}\u{0}{label}\u{0}{:?}", self.options);
+                let cached = self.narrow_cache.initials.lock().ok().and_then(|c| c.1.get(&id).copied());
+                let found = cached.unwrap_or_else(|| {
+                    let prefix = self.mate_prefix(seg, &label);
+                    let found = self.mate_matcher(seg, &label).is_some_and(|m| {
+                        self.dict
+                            .lookup_prefix(&prefix)
+                            .any(|(_, e)| !dict::is_shortcut(&e.reading) && !e.reading.contains(' ') && m(&e.reading))
+                    });
+                    if let Ok(mut cache) = self.narrow_cache.initials.lock() {
+                        cache.1.insert(id, found);
+                    }
+                    found
+                });
+                if found {
+                    add(&label, &mut out);
+                }
+            }
+        } else {
+            // Nhóm của phụ âm đã gõ và các phụ âm dài hơn bắt đầu bằng nó (n: ng, nh, ngh), không lấy nhóm của chữ khác
+            // phím (gõ d có đ, nhưng không kéo theo t, th của nhóm đ).
+            let typed: String = seg.iter().collect();
+            let typed = if typed == "q" { "qu".to_string() } else { typed };
+            let mut base: Vec<String> = have.iter().filter(|h| h.starts_with(typed.as_str())).cloned().collect();
+            if base.is_empty() {
+                base.push(typed);
+            }
+            for g in INITIAL_GROUPS {
+                if base.iter().any(|o| g.contains(&o.as_str())) {
+                    for m in g.iter() {
+                        if self.initial_has_words(m) {
+                            add(m, &mut out);
+                        }
+                    }
+                }
+            }
+            if let Some(&(_, extra)) = INITIAL_EXTRAS.iter().find(|(from, _)| base.iter().any(|o| o == from)) {
+                if self.initial_has_words(extra) {
+                    add(extra, &mut out);
+                }
+            }
+        }
+        out
+    }
+
+    /// Phần đầu khoá tra ([`Dictionary::lookup_prefix`]) của mọi âm [`Self::mate_matcher`] nhận: phụ âm `label` bỏ dấu rồi
+    /// phần sau phụ âm của khoá chữ đã gõ ([`Self::chunk_prefix`]); không tách được thì chỉ phụ âm `label`.
+    fn mate_prefix(&self, seg: &[char], label: &str) -> String {
+        let head = text::fold(label);
+        let typed = self.compose(&seg.iter().collect::<String>()).to_lowercase();
+        let (Some(key), Some(parts)) = (self.chunk_prefix(seg), syllable_split(&typed)) else { return head };
+        let typed_initial = text::fold(&parts[0]);
+        match key.strip_prefix(typed_initial.as_str()) {
+            // i / y cuối đổi theo chữ đứng trước (khoá `ki` của kỹ nhưng `quy` của quý): bỏ đi cho chắc.
+            Some(rest) => format!("{head}{}", rest.trim_end_matches(['i', 'y'])),
+            None => head,
+        }
+    }
+
+    /// Âm đọc khớp đoạn phím `seg` (gõ đủ âm) khi đổi phụ âm đầu thành `label` ([`Self::loose_words`]): âm có phụ âm đầu
+    /// `label`, thay lại bằng phụ âm đã gõ thì khớp như [`Self::chunk_matches`] (`laf` + n: nà, nàng; không nam).
+    fn mate_matcher<'s>(&self, seg: &'s [char], label: &str) -> Option<impl Fn(&str) -> bool + 's> {
+        let typed = self.compose(&seg.iter().collect::<String>()).to_lowercase();
+        let typed_initial = syllable_split(&typed)?[0].clone();
+        let base = self.chunk_matcher(seg);
+        let label = label.to_string();
+        Some(move |reading: &str| {
+            let Some(parts) = syllable_split(reading) else { return false };
+            if parts[0] != label {
+                return false;
+            }
+            let rest: String = reading.chars().skip(parts[0].chars().count()).collect();
+            base(&format!("{typed_initial}{rest}"))
+        })
+    }
+
+    /// [`Self::narrow`] cho âm kế tiếp sau các âm đã chốt `locks` ([`Self::locked_rows`]).
+    pub fn narrow_locked(&self, keys: &str, before: &str, locks: &[Vec<(Part, String)>], picked: &[(Part, String)]) -> Option<(Part, Vec<String>)> {
+        // Chỉ các hàng còn âm kế tiếp mới có gì để thu hẹp.
+        let rows_of = |picked: &[(Part, String)]| -> Vec<(Candidate, [String; 5], bool)> {
+            self.locked_rows(keys, before, locks, picked).iter().filter_map(|(c, parts, s)| Some((c.clone(), parts.clone()?, *s))).collect()
+        };
+        if let Some((Part::Syllable, chosen)) = picked.last() {
+            let bare = untoned(chosen);
+            let mut seen = HashSet::new();
+            let mut options: Vec<String> = rows_of(&picked[..picked.len() - 1])
+                .into_iter()
+                .map(|(_, parts, _)| parts[4].clone())
+                .filter(|s| untoned(s) == bare && seen.insert(s.clone()))
+                .collect();
+            if !options.contains(chosen) {
+                options.push(chosen.clone());
+            }
+            sort_by_tone(&mut options);
+            return Some((Part::Syllable, options));
+        }
+        let rows = rows_of(picked);
+        let start = picked.last().map_or(0, |(p, _)| *p as usize + 1);
+        // Đoạn phím của âm kế tiếp: gõ đủ âm (có nguyên âm) thì cột chỉ hỏi đổi phụ âm đầu (cả nhóm) rồi đổi dấu; chỉ gõ
+        // phụ âm đầu thì hỏi đủ các cấp, phụ âm đầu hỏi cả nhóm (người dùng muốn 2026-11-15).
+        let seg = self.next_segment(keys, locks.len());
+        let full = seg.as_ref().is_some_and(|s| full_syllable_keys(s));
+        for level in start..PARTS.len() {
+            let mut seen = HashSet::new();
+            let mut options: Vec<String> = rows.iter().map(|(_, parts, _)| parts[level].clone()).filter(|v| seen.insert(v.clone())).collect();
+            if full && matches!(PARTS[level], Part::Vowel | Part::Nucleus | Part::Final) {
+                continue;
+            }
+            if PARTS[level] == Part::Initial && picked.is_empty() {
+                if let Some(seg) = &seg {
+                    for m in self.locked_mates(seg, &options) {
+                        if seen.insert(m.clone()) {
+                            options.push(m);
+                        }
+                    }
+                }
+            }
+            if PARTS[level] == Part::Vowel && !self.always_ask_vowel {
+                let rhymes: HashSet<&str> = rows.iter().map(|(_, parts, _)| parts[Part::Nucleus as usize].as_str()).collect();
+                if rhymes.len() <= MERGED_RHYMES {
+                    continue;
+                }
+            }
+            if PARTS[level] == Part::Final && options.iter().all(|o| o.is_empty()) {
+                continue;
+            }
+            // Một lựa chọn thì khỏi hỏi, trừ cả âm có thanh (lưới đã là chữ của âm đó, vẫn đổi thanh được).
+            if options.is_empty() || (options.len() < 2 && PARTS[level] != Part::Syllable) {
+                continue;
+            }
+            if PARTS[level] == Part::Syllable {
+                sort_by_tone(&mut options);
+            } else {
+                // Phần có chữ khớp phím đã gõ trước, phần chỉ có chữ của phụ âm cùng nhóm ch/tr (thay phím) sau.
+                let typed = |v: &String| rows.iter().any(|(_, parts, swapped)| !swapped && parts[level] == *v);
+                options.sort_by_cached_key(|v| (!typed(v), v.chars().count(), dict::collation_key(v)));
+            }
+            return Some((PARTS[level], options));
+        }
+        None
+    }
+
+    /// Các gợi ý khớp các âm đã chốt `locks` và lựa chọn `picked` của âm kế tiếp, mỗi chữ một lần ([`Self::locked_rows`]).
+    pub fn candidates_locked(&self, keys: &str, before: &str, locks: &[Vec<(Part, String)>], picked: &[(Part, String)]) -> Vec<Candidate> {
+        let mut shown = HashSet::new();
+        self.locked_rows(keys, before, locks, picked).iter().map(|(c, ..)| c).filter(|c| shown.insert(c.text.clone())).cloned().collect()
     }
 
     /// Gợi ý chữ Quốc ngữ có dấu (Telex rút gọn ở chế độ Quốc ngữ): `nguoi` → `người`.
@@ -1136,33 +2364,17 @@ impl Engine {
     /// Ghi nhận người dùng đã chọn một gợi ý: tăng độ phổ biến của cặp đó. Gợi ý ghép không có trong
     /// từ điển thì không học. Trả `true` nếu từ điển đổi.
     pub fn select(&mut self, cand: &Candidate) -> bool {
-        self.options.learning && self.dict.bump(&cand.text, &cand.reading)
-    }
-
-    /// Ghi nhận người dùng đã đưa ra cụm `text` (âm `reading`) cho chuỗi phím `keys`, kể cả cụm ghép tự động hay
-    /// chọn từng phần (`tphn` → 城 + 舖 + 河內): cụm chưa có thì thêm vào từ điển; gõ tắt toàn phụ âm thì nhớ cả
-    /// mã gõ tắt đó (`城舖河內;tphn`), để lần sau gõ đúng chuỗi ấy cụm đứng đầu. Trả `true` nếu từ điển đổi.
-    pub fn learn(&mut self, keys: &str, text: &str, reading: &str) -> bool {
-        if !self.options.learning {
-            return false;
-        }
-        let syllables = reading.split(' ').count();
-        if syllables < 2 || syllables != text.chars().count() {
-            return self.dict.bump(text, reading);
-        }
-        let step = self.dict.step();
-        let mut changed = false;
-        let mut remember = |dict: &mut Dictionary, reading: &str| {
-            if dict.bump(text, reading) {
-                changed = true;
-            } else if let Ok(entry) = dict::Entry::new(text, reading) {
-                changed |= dict.put(None, entry, step);
+        let changed = self.options.learning && self.dict.bump(&cand.text, &cand.reading);
+        if changed {
+            if let Ok(mut cache) = self.narrow_cache.windows.lock() {
+                cache.1.clear();
             }
-        };
-        remember(&mut self.dict, reading);
-        let code = self.shortcut_code(keys);
-        if self.options.telex && is_initials_only(keys) && dict::is_shortcut(&code) && code.chars().count() <= MAX_ABBREVIATION {
-            remember(&mut self.dict, &code);
+            if let Ok(mut m) = self.narrow_cache.sentence.lock() {
+                m.clear();
+            }
+            if let Ok(mut m) = self.narrow_cache.candidates.lock() {
+                m.clear();
+            }
         }
         changed
     }
@@ -1218,6 +2430,9 @@ pub enum Part {
     Syllable,
 }
 
+/// Tổng số vần không quá chừng này thì cột trái hỏi thẳng vần, không hỏi nguyên âm đầu trước.
+const MERGED_RHYMES: usize = 10;
+
 const PARTS: [Part; 5] = [Part::Initial, Part::Vowel, Part::Nucleus, Part::Final, Part::Syllable];
 
 impl Part {
@@ -1263,6 +2478,45 @@ fn spell(part: Part, p: &[String; 5]) -> String {
 
 /// Phụ âm đầu, nguyên âm đầu, vần nguyên âm, phụ âm cuối (bỏ thanh) và cả âm tiết `s` (chữ thường), theo
 /// thứ tự [`PARTS`]; `None` nếu không có nguyên âm.
+/// Nhóm phụ âm đầu duy nhất được khớp lỏng khi chốt tương đối ([`Engine::locked_rows`]; người dùng đặt riêng nhóm này).
+const CH_TR: [&str; 2] = ["ch", "tr"];
+
+/// Phần `p` của âm (`parts`, [`syllable_split`]) có khớp lựa chọn `v` không: `Some(false)` khớp đúng, `Some(true)` khớp
+/// lỏng (phụ âm đầu cùng nhóm ch/tr), `None` không khớp.
+fn part_matches(p: Part, v: &str, parts: &[String; 5]) -> Option<bool> {
+    let part = parts[p as usize].as_str();
+    if part == v {
+        Some(false)
+    } else if p == Part::Initial && CH_TR.contains(&v) && CH_TR.contains(&part) {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// Như [`part_matches`], cho âm thứ i mà đoạn phím chỉ là `w` (`w_chunk`): chọn vần "ư" là mọi âm bắt đầu bằng ư
+/// (ư, ưng, ương, ước…), như ấn cách chốt theo phím (người dùng chọn 2026-11-14), không chỉ vần đúng ư.
+fn part_matches_at(p: Part, v: &str, parts: &[String; 5], w_chunk: bool) -> Option<bool> {
+    if w_chunk && p == Part::Nucleus && v == "ư" {
+        return (parts[Part::Vowel as usize] == "ư").then_some(false);
+    }
+    part_matches(p, v, parts)
+}
+
+/// Đoạn phím của một âm đã gõ quá phụ âm đầu (có nguyên âm), không chỉ phụ âm đầu: `qu`, `gi` (chưa có nguyên âm
+/// sau) vẫn là chỉ phụ âm đầu.
+fn full_syllable_keys(seg: &[char]) -> bool {
+    let skip = if seg.starts_with(&['q', 'u']) || seg.starts_with(&['g', 'i']) { 2 } else { 0 };
+    seg.iter().skip(skip).any(|c| "aeiouy".contains(*c))
+}
+
+/// Phần đầu khoá tra bỏ dấu ([`Dictionary::lookup_prefix`]) của mọi chữ khớp lựa chọn phụ âm đầu `v`
+/// ([`part_matches`]): chính phụ âm đó bỏ dấu (đ → d). Không có (`None`) khi chưa chọn phụ âm (`v` rỗng). ch / tr khớp
+/// lỏng lẫn nhau, nhưng người gọi đã chỉ tra theo chữ cái đầu (c hay t) nên vẫn chỉ ra phụ âm đó.
+fn initial_prefix(v: &str) -> Option<String> {
+    (!v.is_empty()).then(|| text::fold(v))
+}
+
 fn syllable_split(s: &str) -> Option<[String; 5]> {
     let (letters, _) = text::split_syllable(s)?;
     let (ns, ne) = syllable::nucleus_range(&letters);
@@ -1276,20 +2530,35 @@ fn syllable_split(s: &str) -> Option<[String; 5]> {
 /// Gõ tắt toàn phụ âm: câu ghép tự động đứng sau chừng này chữ của âm đầu ([`Engine::with_sentence`]).
 const RUN_SENTENCE_AFTER: usize = 3;
 
+/// Câu ghép cho các âm đã chốt ([`Engine::locked_composed`]): số mục giữ cho mỗi đoạn, và số cách ghép giữ lại.
+const LOCKED_CHOICES: usize = 8;
+const LOCKED_PREFIXES: usize = 12;
+/// Câu phủ hết phím khi còn nhiều âm chưa chốt: số cách ghép các âm chưa chốt giữ lại.
+const LOCKED_FULL: usize = 3;
+/// Số đoạn giữ trong [`NarrowCache::pieces`] trước khi xoá làm lại (mỗi câu vài chục đoạn).
+const PIECE_CACHE_SIZE: usize = 2000;
+/// Cách ghép phụ chỉ đi với chừng này chữ đầu của âm kế tiếp (đã lọc theo lựa chọn ở cột trái).
+const LOCKED_NEXT: usize = 60;
+
 /// Số phím tối đa cho gõ tắt (giới hạn số cách tách).
 const MAX_ABBREVIATION: usize = 14;
 
 /// Nhóm phụ âm đầu dễ lẫn, đúng như người dùng đặt (2026-11-14): cột trái của bảng gợi ý hỏi mọi phụ âm cùng
 /// nhóm ([`Engine::narrow`]), trừ phụ âm ghép vào không ra chữ nào. Phụ âm không có trong nhóm nào (h, kh, nh) đứng
 /// riêng. Đặc tả: mục F3 của PRD-mobile.md; chỉ người dùng đổi nhóm.
-const INITIAL_GROUPS: [&[&str]; 5] = [
-    // Nhóm do người dùng đặt; h, kh, nh đứng riêng (không cùng nhóm với phụ âm nào).
-    &["b", "m", "v", "l", "n", "p", "ph", "d", "gi", "r", "đ", "t", "th"],
+const INITIAL_GROUPS: [&[&str]; 7] = [
+    // Nhóm do người dùng đặt (chia lại 2026-11-14); h, kh, nh đứng riêng (không cùng nhóm với phụ âm nào).
+    &["b", "m", "v", "p", "ph", "d", "gi", "r"],
+    &["l", "n"],
+    &["đ", "t", "th"],
     &["c", "k", "qu", "g", "gh"],
     &["ch", "tr"],
     &["ng", "ngh"],
     &["s", "x"],
 ];
+/// Ngoại lệ ngoài nhóm, một chiều (người dùng đặt 2026-11-15): gõ phụ âm thứ nhất thì cột hỏi thêm phụ âm thứ hai
+/// (gõ d thì có cả đ; gõ đ thì không hỏi d). Vẫn ẩn nếu không ra chữ nào.
+const INITIAL_EXTRAS: [(&str, &str); 1] = [("d", "đ")];
 /// Gõ tắt toàn phụ âm kiểu Telex: cụm khớp phần đầu chuỗi phím dài tối đa chừng này phím (đủ cho cụm 6 chữ).
 const MAX_PREFIX_ABBREVIATION: usize = 6;
 
@@ -1304,9 +2573,21 @@ const MAX_SYLLABLE_LETTERS: usize = 7;
 /// Chuỗi phím dài hơn thế thì không ghép cả câu (tránh treo: mỗi vị trí phải tra từ điển một lần).
 /// Đo trên máy tính (WASM, từ điển thật): 80 phím ≈ 200 ms, nên không nâng.
 const MAX_SENTENCE_KEYS: usize = 80;
-/// Như [`MAX_SENTENCE_KEYS`] cho bàn phím Telex: chữ đã tách bằng phím cách nên tra nhanh hơn nhiều
-/// (120 phím ≈ 30 ms, 160 phím ≈ 80 ms).
-const MAX_SENTENCE_KEYS_TELEX: usize = 120;
+/// Như [`MAX_SENTENCE_KEYS`] cho bàn phím Telex: không giới hạn. Ghép câu chỉ tra cửa sổ quanh từng vị trí
+/// ([`Engine::window_ranked`]) và tính tiếp từ lần trước ([`NarrowCache::sentence`]), nên thời gian mỗi phím không tăng
+/// theo độ dài (đo 2026-11-15, WASM trên máy tính, văn bản báo không lặp: ~10–25 ms mỗi phím ở 250–4000 phím; cụm test
+/// lặp lại: 12 ms ở 2000 phím, 18 ms ở 20000 phím). Trước đó tra cả phần còn lại (120 phím ≈ 30 ms, 160 phím ≈ 80 ms),
+/// rồi giới hạn 1000 phím.
+const MAX_SENTENCE_KEYS_TELEX: usize = usize::MAX;
+/// Số chữ (giữa các dấu tách) của một cửa sổ ghép câu: hơn số âm của cụm dài nhất trong từ điển
+/// ([`dict::MAX_TEXT_CHARS`]), để cụm nào cũng nằm gọn trong cửa sổ.
+const SENTENCE_WINDOW_WORDS: usize = dict::MAX_TEXT_CHARS + 1;
+/// Số chữ giữ trong [`NarrowCache::words`]; đầy thì xoá hết.
+const WORD_KIND_CACHE: usize = 4096;
+/// Số cửa sổ ghép câu giữ trong đệm ([`NarrowCache::windows`]); đầy thì xoá hết.
+const SENTENCE_WINDOW_CACHE: usize = 512;
+/// Số chuỗi phím giữ kết quả [`Engine::candidates`] ([`NarrowCache::candidates`]).
+const CANDIDATES_CACHE: usize = 96;
 
 /// Mọi chuỗi chữ cái đầu có thể có khi tách `keys` thành ≥ 2 đoạn (dấu `'` ép ranh giới).
 fn collect_initials(keys: &[char], pos: usize, acc: &mut String, out: &mut HashSet<String>) {
@@ -1622,20 +2903,18 @@ mod tests {
     }
 
     #[test]
-    fn telex_backspace_clears_tone() {
-        let b = |k: &str| telex::backspace_telex(k, ToneStyle::Old);
-        // Phím dấu đã thay dấu cũ: xoá hẳn dấu (à → a), không lùi về á.
-        assert_eq!(b("asf"), "a");
-        assert_eq!(b("lawng'loanfs"), "lawng'loan");
-        assert_eq!(b("lawngloanfs"), "lawngloan");
-        assert_eq!(b("tosf"), "to");
-        // Còn lại như thường: bỏ phím cuối.
-        assert_eq!(b("as"), "a");
-        assert_eq!(b("hasn"), "has");
+    fn telex_backspace_drops_last_shown_letter() {
+        let b = |k: &str| telex::display_telex(&telex::backspace_telex(k, ToneStyle::Old), ToneStyle::Old);
+        // Xoá chữ cái cuối đang hiện, kèm dấu của nó (người dùng muốn 2026-11-16).
+        assert_eq!(b("asf"), "");
+        assert_eq!(b("tosf"), "t");
+        assert_eq!(b("lawng'loanfs"), "lăng'loá");
+        assert_eq!(b("hasn"), "há");
         assert_eq!(b("loan"), "loa");
         // `s` là phụ âm đầu chữ mới thì chỉ bỏ nó.
-        assert_eq!(b("tot's"), "tot'");
-        assert_eq!(b(""), "");
+        assert_eq!(telex::backspace_telex("tot's", ToneStyle::Old), "tot'");
+        assert_eq!(telex::backspace_telex("tot'", ToneStyle::Old), "tot");
+        assert_eq!(telex::backspace_telex("", ToneStyle::Old), "");
     }
 
     #[test]
@@ -1815,6 +3094,19 @@ mod tests {
     }
 
     #[test]
+    fn sentence_for_initials_then_syllable() {
+        // Gõ tắt dính liền âm gõ đủ (`hsmieenf` → học sinh miền): ghép câu, phần gõ tắt lấy cụm có sẵn.
+        let (dict, _) = from_text("學生;học sinh\n學;học\n生;sinh\n沔;miền\n南;nam\n𢆥;năm\n");
+        let mut e = Engine::new(dict);
+        e.options.telex = true;
+        let top = |e: &Engine, keys: &str| e.candidates(keys).first().map(|c| c.text.clone()).unwrap_or_default();
+        assert!(e.initials_then_syllable("hsmieenf"));
+        assert!(!e.initials_then_syllable("exchanging"));
+        assert_eq!(top(&e, "hsmieenf"), "學生沔");
+        assert_eq!(top(&e, "hsmieenf'nam"), "學生沔南");
+    }
+
+    #[test]
     fn sentence_for_any_words() {
         let (dict, _) = from_text(
             "𠬠;một\n𠄩;hai\n𠀧;ba\n𣈜;ngày\n𡗶;trời\n地;địa\n𠫾;đi\n移;di\n𡨸喃;chữ nôm\n共;cùng\n漢越;hán việt\n南;nam\n",
@@ -1902,9 +3194,113 @@ mod tests {
     }
 
     #[test]
+    fn locked_syllables_narrow_the_next_one() {
+        // Chốt tương đối ở cột trái: âm đầu chốt "ph…" (gõ `pt` vẫn khớp ph), cột chuyển sang âm thứ hai.
+        let mut e = Engine::new(
+            Dictionary::from_text("發展;phát triển;9\n發診;phát chẩn;2\n發明;phát minh;9\n破產;phá sản;3\n巴拿;ba na;3\n").0,
+        );
+        e.options.telex = true;
+        let locks = [vec![(Part::Initial, "ph".to_string())]];
+        let pick = |v: &str| [(Part::Initial, v.to_string())];
+        // Âm thứ hai của `pt`: tr (khớp phím t) trước, ch cùng nhóm ch/tr sau (phát chẩn; người dùng muốn 2026-11-14).
+        assert_eq!(e.narrow_locked("pt", "", &locks, &[]), Some((Part::Initial, strs(&["tr", "ch"]))));
+        assert_eq!(texts(&e.candidates_locked("pt", "", &locks, &[])), ["發展", "發診"]);
+        // Chọn tr: đúng tr trước, ch cùng nhóm sau; chọn ch thì ngược lại.
+        assert_eq!(texts(&e.candidates_locked("pt", "", &locks, &pick("tr"))), ["發展", "發診"]);
+        assert_eq!(texts(&e.candidates_locked("pt", "", &locks, &pick("ch"))), ["發診", "發展"]);
+        // Nhóm khác không lỏng: chốt b… thì không có cụm ph….
+        assert!(e.candidates_locked("pt", "", &[pick("b").to_vec()], &[]).is_empty());
+        // Chốt mà chưa chọn gì: âm đầu theo phím đã gõ (p khớp cả ph), không thêm ràng buộc.
+        assert_eq!(texts(&e.candidates_locked("pm", "", &[vec![]], &[])), ["發明"]);
+    }
+
+    #[test]
+    fn locked_syllable_then_abbreviation() {
+        // `twcmn` (trung ương cục miền nam): mỗi chữ cái một âm, kể cả `w` (ư…). Chốt tr… cho `t` thì cột sang `w`
+        // (ương), chốt tiếp thì sang `c` (người dùng muốn 2026-11-14).
+        let mut e = Engine::new(
+            Dictionary::from_text("中央局;trung ương cục;3\n中央;trung ương;9\n張公;trương công;3\n").0,
+        );
+        e.options.telex = true;
+        assert_eq!(e.syllable_chunks("twcmn"), [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]);
+        assert_eq!(e.syllable_chunks("bph'nguowif"), [(0, 1), (1, 2), (2, 3), (4, 11)]);
+        // Gõ tiếp nguyên âm sau chuỗi phụ âm: các âm trước giữ nguyên (`twcm` + `i` → t, w, c, mi).
+        assert_eq!(e.syllable_chunks("twcmi"), [(0, 1), (1, 2), (2, 3), (3, 5)]);
+        assert_eq!(e.syllable_chunks("twcnghi"), [(0, 1), (1, 2), (2, 3), (3, 7)]);
+        assert_eq!(e.syllable_chunks("tddi"), [(0, 1), (1, 4)]);
+        // Chốt cả `c` rồi gõ tiếp miền đủ (Telex) và chốt theo phím đã gõ: vẫn ghép được (中央局 + 沔).
+        // Âm `w`: chọn vần "ư" ở cột là mọi âm bắt đầu bằng ư (người dùng chọn 2026-11-14), nên vẫn ra trung ương.
+        let u = [vec![(Part::Initial, "tr".to_string())], vec![(Part::Nucleus, "ư".to_string())]];
+        assert_eq!(texts(&e.candidates_locked("twcmn", "", &u, &[])), ["中央局", "中央"]);
+        // Âm kế tiếp gõ đủ (`nam`): câu ghép với chữ nam đứng ngay sau cụm có sẵn, trước chữ chỉ của âm đã chốt.
+        let mut n = Engine::new(Dictionary::from_text("閩南;mân nam;0\n沒;một;9\n南;nam;5\n").0);
+        n.options.telex = true;
+        assert_eq!(texts(&n.candidates_locked("mnam", "", &[vec![]], &[])), ["閩南", "沒南", "沒"]);
+        let mut m = Engine::new(Dictionary::from_text("中央局;trung ương cục;3\n沔;miền;2\n綿;miên;2\n").0);
+        m.options.telex = true;
+        let four = [vec![(Part::Initial, "tr".to_string())], vec![], vec![], vec![]];
+        assert_eq!(texts(&m.candidates_locked("twcmieenf", "", &four, &[])), ["中央局沔"]);
+        assert_eq!(texts(&m.candidates_locked("twcmien", "", &four, &[])), ["中央局沔", "中央局綿"]);
+        let tr = vec![(Part::Initial, "tr".to_string())];
+        assert_eq!(texts(&e.candidates_locked("twcmn", "", &[tr.clone()], &[])), ["中央局", "中央"]);
+        // Âm thứ hai (w) chỉ có ương: cột hỏi thẳng cả âm.
+        assert_eq!(e.narrow_locked("twcmn", "", &[tr.clone()], &[]), Some((Part::Syllable, strs(&["ương"]))));
+        // Chốt tiếp ương: âm thứ ba (c) là cục.
+        let locks = [tr, vec![(Part::Syllable, "ương".to_string())]];
+        assert_eq!(texts(&e.candidates_locked("twcmn", "", &locks, &[])), ["中央局", "中央"]);
+    }
+
+    #[test]
+    fn locked_syllables_compose_without_phrase() {
+        // Từ điển không có trung ương cục: chốt trung, ương thì âm `c` vẫn hỏi được (chữ một âm), sau cụm có sẵn;
+        // chốt cả cục thì ghép 中央 + 局, rồi `m` là chữ một âm (người dùng muốn 2026-11-14).
+        let mut e = Engine::new(Dictionary::from_text("中央;trung ương;9\n中國;trung quốc;9\n局;cục;3\n各;các;5\n𨉟;mình;5\n").0);
+        e.options.telex = true;
+        let tr = vec![(Part::Initial, "tr".to_string())];
+        let two = [tr.clone(), vec![(Part::Syllable, "ương".to_string())]];
+        let found = e.candidates_locked("twcmn", "", &two, &[]);
+        let cands = texts(&found);
+        assert_eq!(cands.first(), Some(&"中央"), "{cands:?}");
+        assert!(cands.contains(&"中央局") && cands.contains(&"中央各"), "{cands:?}");
+        let three = [two[0].clone(), two[1].clone(), vec![(Part::Syllable, "cục".to_string())]];
+        assert_eq!(texts(&e.candidates_locked("twcmn", "", &three, &[])), ["中央局𨉟", "中央局"]);
+        assert_eq!(texts(&e.candidates_locked("twc", "", &three, &[])), ["中央局"]);
+        // Âm đã chốt có nhiều chữ: đổi được cả chữ của nó (局, 侷), chữ phổ biến hơn trước.
+        let mut e = Engine::new(Dictionary::from_text("中央;trung ương;9\n局;cục;3\n侷;cục;1\n𨉟;mình;5\n").0);
+        e.options.telex = true;
+        assert_eq!(texts(&e.candidates_locked("twcmn", "", &three, &[])), ["中央局𨉟", "中央侷𨉟", "中央局", "中央侷"]);
+    }
+
+    #[test]
+    fn locked_syllable_follows_the_chosen_char() {
+        // `ctqg`: đã chọn 政 cho `c`, chốt tr… cho `t`: 治 (của 政治) đứng đầu, dù chỉ vừa đủ âm đã chốt.
+        let mut e = Engine::new(Dictionary::from_text("政治;chính trị;9\n中國;trung quốc;9\n治;trị;5\n政;chính;5\n").0);
+        e.options.telex = true;
+        let locks = [vec![(Part::Initial, "tr".to_string())]];
+        let cands = e.candidates_locked("tqg", "政", &locks, &[]);
+        assert_eq!(texts(&cands).first(), Some(&"治"), "{:?}", texts(&cands));
+        assert!(texts(&cands).contains(&"中國"), "{:?}", texts(&cands));
+    }
+
+    #[test]
+    fn narrow_tones_keep_readings_of_shared_chars() {
+        // 牟 đọc cả mâu lẫn mầu: cột thanh vẫn phải có mầu, lưới mỗi chữ một lần.
+        let e = Engine::new(Dictionary::from_text("矛;mâu;1\n牟;mâu;1\n牟;mầu;0\n母;mẫu;3\n").0);
+        let picked = [(Part::Initial, "m".to_string()), (Part::Nucleus, "âu".to_string())];
+        let tones = e.narrow("m", &picked).map(|(_, o)| o).unwrap_or_default();
+        assert!(tones.contains(&"mầu".to_string()), "{tones:?}");
+        let chosen = [picked[0].clone(), picked[1].clone(), (Part::Syllable, "mâu".to_string())];
+        let tones = e.narrow("m", &chosen).map(|(_, o)| o).unwrap_or_default();
+        assert!(tones.contains(&"mầu".to_string()), "{tones:?}");
+        let cands = e.candidates_narrowed("m", &picked[..1]);
+        let grid = texts(&cands);
+        assert_eq!(grid.iter().filter(|t| **t == "牟").count(), 1, "{grid:?}");
+    }
+
+    #[test]
     fn narrows_first_syllable_by_parts() {
         // 極 có hai âm, cọc đứng trước: thu hẹp theo cực vẫn phải thấy 極.
-        let e = Engine::new(
+        let mut e = Engine::new(
             Dictionary::from_text("極;cọc;0
 極;cực;0
 局;cục;0
@@ -1918,6 +3314,7 @@ mod tests {
 求;cầu;0
 ").0,
         );
+        e.always_ask_vowel = true;
         let pick = |p: Part, v: &str| (p, v.to_string());
         let narrow = |k: &str, p: &[(Part, String)]| e.narrow(k, p);
         // Chỉ gõ phụ âm đầu: hỏi phụ âm đầu (c hay ch), rồi nguyên âm đầu, vần, phụ âm cuối, thanh.
@@ -1953,9 +3350,8 @@ mod tests {
         assert_eq!(narrow("chu", &[]), Some((Part::Vowel, vec!["â".into(), "u".into()])));
         let chu = [pick(Part::Initial, "ch"), pick(Part::Vowel, "u")];
         assert_eq!(narrow("chu", &chu), Some((Part::Syllable, vec!["chu".into(), "chú".into()])));
-        // Chữ cái vừa gõ không tự là phụ âm đầu (mọi chữ q đều là qu-): vẫn hỏi q hay qu; q là mọi chữ qu-.
-        // Chữ đã gõ đứng đầu, ngay sau là phụ âm dài hơn bắt đầu bằng nó (qu), rồi phụ âm cùng nhóm có chữ (c).
-        assert_eq!(narrow("q", &[]), Some((Part::Initial, strs(&["q", "qu", "c"]))));
+        // `q` mặc định là qu (mọi chữ q đều là qu-): cột không có lựa chọn q, qu đứng đầu, rồi phụ âm cùng nhóm có chữ (c).
+        assert_eq!(narrow("q", &[]), Some((Part::Initial, strs(&["qu", "c"]))));
         assert_eq!(narrow("c", &[]), Some((Part::Initial, strs(&["c", "ch", "qu"]))));
         assert_eq!(texts(&e.candidates_narrowed("q", &[pick(Part::Initial, "q")])), ["瓜"]);
         assert_eq!(texts(&e.candidates_narrowed("q", &[pick(Part::Initial, "qu")])), ["瓜"]);
@@ -1978,6 +3374,7 @@ mod tests {
 渚;trưa;0
 咦;gì;0
 𠫾;đi;0
+提;đì;0
 姨;dì;0
 ").0,
         );
@@ -1994,13 +3391,13 @@ mod tests {
         // ch / tr dài bằng nhau; gi ↔ d: `gif` gì là g + i, đổi sang d giữ i (`dif` dì).
         assert_eq!(texts(&e.candidates_narrowed("truwa", &pick(Part::Initial, "ch"))), ["諸"]);
         assert_eq!(texts(&e.candidates_narrowed("gif", &pick(Part::Initial, "d"))), ["姨"]);
-        // d ở nhóm b/m/v/l/n/p/ph/d/gi/r/đ/t/th: `dif` dì → gì (g + i), đi.
+        // d ở nhóm b/m/v/p/ph/d/gi/r: `dif` dì → gì (g + i); đ ở nhóm khác (đ/t/th) nhưng gõ d thì đ được hỏi thêm
+        // (ngoại lệ một chiều, người dùng đặt 2026-11-15): dì → đì.
         assert_eq!(e.narrow("dif", &[]), Some((Part::Initial, strs(&["d", "đ", "g"]))));
         assert_eq!(texts(&e.candidates_narrowed("dif", &pick(Part::Initial, "g"))), ["咦"]);
-        assert_eq!(texts(&e.candidates_narrowed("dif", &pick(Part::Initial, "đ"))), ["𠫾"]);
-        // `ddi` đi ↔ `di` dì, thay đúng 3 phím đã gõ.
-        assert_eq!(texts(&e.candidates_narrowed("ddi", &pick(Part::Initial, "d"))), ["姨"]);
-        assert_eq!(e.candidates_narrowed("ddi", &pick(Part::Initial, "d"))[0].consumed, 3);
+        assert_eq!(texts(&e.candidates_narrowed("dif", &pick(Part::Initial, "đ"))), ["𠫾", "提"]);
+        // Một chiều: `ddif` đì không hỏi d.
+        assert!(e.narrow("ddif", &[]).is_none_or(|(_, o)| !o.contains(&"d".to_string())));
         // Phụ âm cùng nhóm không ra chữ nào thì ẩn: `cura` chỉ có của, không hỏi phụ âm đầu.
         assert!(e.narrow("cura", &[]).is_none_or(|(p, _)| p != Part::Initial));
     }
@@ -2008,34 +3405,76 @@ mod tests {
     #[test]
     fn narrowing_initials_run_asks_first_letter() {
         // Telex gõ tắt toàn phụ âm `ndtphn`: âm tiết đầu là n (chữ cái đầu), cột trái hỏi n, rồi ng, nh, ngh như khi
-        // chỉ gõ `n`, rồi phụ âm cùng nhóm; chọn nh / b ra chữ của phụ âm đó, thay đúng phím n.
-        let mut e = Engine::new(Dictionary::from_text("南;nam;0\n𰌽;nhà;0\n婆;bà;0\n民;dân;0\n").0);
+        // chỉ gõ `n`, rồi phụ âm cùng nhóm (l/n); chọn nh / l ra chữ của phụ âm đó, thay đúng phím n. b khác nhóm.
+        let mut e = Engine::new(Dictionary::from_text("南;nam;0\n𰌽;nhà;0\n羅;là;0\n婆;bà;0\n四;tư;0\n").0);
         e.options.telex = true;
-        assert_eq!(e.narrow("ndtphn", &[]), Some((Part::Initial, strs(&["n", "nh", "b", "d"]))));
+        assert_eq!(e.narrow("ndtphn", &[]), Some((Part::Initial, strs(&["n", "nh", "l"]))));
         let nh = e.candidates_narrowed("ndtphn", &[(Part::Initial, "nh".to_string())]);
         assert_eq!(texts(&nh), ["𰌽"]);
         assert_eq!(nh[0].consumed, 1);
-        assert_eq!(texts(&e.candidates_narrowed("ndtphn", &[(Part::Initial, "b".to_string())])), ["婆"]);
+        assert_eq!(texts(&e.candidates_narrowed("ndtphn", &[(Part::Initial, "l".to_string())])), ["羅"]);
         // Chưa chọn gì: lưới là chữ của âm đầu như khi chỉ gõ `n` (cả n và nh), không chỉ chữ đúng n.
         assert_eq!(texts(&e.candidates_narrowed("ndtphn", &[])), ["南", "𰌽"]);
-        // `dd` là đ: thay cả 2 phím.
-        let d = e.candidates_narrowed("ddn", &[(Part::Initial, "d".to_string())]);
-        assert_eq!(texts(&d), ["民"]);
-        assert_eq!(d[0].consumed, 2);
+        // `dd` là đ (nhóm đ/t/th): chọn t thay cả 2 phím.
+        let t = e.candidates_narrowed("ddn", &[(Part::Initial, "t".to_string())]);
+        assert_eq!(texts(&t), ["四"]);
+        assert_eq!(t[0].consumed, 2);
     }
 
     #[test]
-    fn initials_run_joins_common_words_and_learns() {
+    fn locked_first_syllable_offers_every_char() {
+        // Chốt cả `lăng bác hồ`: lưới có mọi chữ của âm đầu (cả chữ ít dùng nhất, 陵), ghép với chữ tốt nhất phía sau.
+        let mut text = String::new();
+        for (n, c) in ["𢠯", "𣼽", "𦗏", "菱", "凌", "淩", "䗀", "綾", "棱", "浪"].iter().enumerate() {
+            text.push_str(&format!("{c};lăng;{}\n", 9 - n.min(8)));
+        }
+        text.push_str("陵;lăng;0\n北;bắc;9\n伯;bác;5\n胡;hồ;9\n");
+        let mut e = Engine::new(Dictionary::from_text(&text).0);
+        e.options.telex = true;
+        let locks = vec![Vec::new(); 3];
+        let texts: Vec<String> = e.candidates_locked("langw'bacs'hoof", "", &locks, &[]).into_iter().map(|c| c.text).collect();
+        assert!(texts.contains(&"陵北胡".to_string()), "{texts:?}");
+        // Các cách ghép tốt nhất vẫn đứng trước.
+        assert_eq!(texts[0], "𢠯北胡");
+    }
+
+    #[test]
+    fn initials_run_mixed_with_full_syllables() {
+        // Gõ tắt toàn phụ âm rồi âm gõ đủ (`tw'mieenf'bawcs`): vẫn ghép cả câu, có chữ của âm cuối (北).
+        let mut e = Engine::new(Dictionary::from_text("中;trung;9\n央;ương;5\n中央;trung ương;5\n沔;miền;5\n北;bắc;5\n").0);
+        e.options.telex = true;
+        let joined: Vec<String> = e.candidates("tw'mieenf'bawcs").into_iter().filter(|c| c.joined).map(|c| c.text).collect();
+        assert!(joined.iter().any(|t| t.ends_with('北')), "{joined:?}");
+        // Chọn 中 cho `t`: phần còn lại `w'mieenf'bawcs` gợi ý 央 (中央), dù sau gõ tắt là chữ gõ đủ.
+        let after: Vec<String> = e.after("中", "w'mieenf'bawcs").into_iter().map(|(c, ..)| c.text).collect();
+        assert_eq!(after, ["央"]);
+        let after: Vec<String> = e.after("中", "wc'mieenf'bawcs").into_iter().map(|(c, ..)| c.text).collect();
+        assert_eq!(after, ["央"]);
+    }
+
+    #[test]
+    fn initials_run_joins_common_words() {
         // `phn`: câu ghép lấy chữ dùng nhiều của p (cả ph: phố) chứ không chỉ chữ đúng p (pi).
         let mut e = Engine::new(Dictionary::from_text("𪪈;pi;0\n舖;phố;9\n城;thành;9\n河內;hà nội;9\n漢喃;hán nôm;1\n").0);
         e.options.telex = true;
         let cands = e.candidates("phn");
         let joined: Vec<&str> = cands.iter().filter(|c| c.joined).map(|c| c.text.as_str()).collect();
         assert_eq!(joined, ["舖河內"]);
-        // Chọn 城舖河內 (từng phần hay cả cụm) cho `tphn`: lần sau cụm đó đứng đầu.
-        assert!(e.learn("tphn", "城舖河內", "thành phố hà nội"));
-        assert_eq!(e.candidates("tphn")[0].text, "城舖河內");
-        assert!(e.dict.freq_of("城舖河內", "thành phố hà nội").is_some());
+    }
+
+    #[test]
+    fn few_rhymes_skip_vowel_level() {
+        // Ít vần: hỏi thẳng vần (a, ai, ao, ă, â, âu), không hỏi nguyên âm a / ă / â trước rồi lại a, ai, ao.
+        let e = Engine::new(Dictionary::from_text("羅;la;0
+來;lai;0
+牢;lao;0
+𠽔;lăn;0
+林;lâm;0
+樓;lâu;0
+").0);
+        let l = [(Part::Initial, "l".to_string())];
+        assert_eq!(e.narrow("l", &l), Some((Part::Nucleus, strs(&["a", "ă", "â", "ai", "ao", "âu"]))));
+        assert_eq!(texts(&e.candidates_narrowed("l", &[l[0].clone(), (Part::Nucleus, "ai".to_string())])), ["來"]);
     }
 
     #[test]
@@ -2068,13 +3507,14 @@ mod tests {
     fn narrowing_other_initial_keeps_shorter_syllables() {
         // Gõ `rich` mà ý là di chuyển, hay gõ tắt d… + ích: chọn d (cùng nhóm với r) ở cột trái vẫn hỏi nguyên
         // âm, phụ âm cuối để tới được di, dân, không chỉ còn dịch khớp trọn chữ.
-        let e = Engine::new(
+        let mut e = Engine::new(
             Dictionary::from_text("易;dịch;0
 移;di;0
 民;dân;0
 移轉;di chuyển;0
 ").0,
         );
+        e.always_ask_vowel = true;
         let d = [(Part::Initial, "d".to_string())];
         assert_eq!(e.narrow("rich", &d), Some((Part::Vowel, vec!["â".into(), "i".into()])));
         let dan = [d[0].clone(), (Part::Vowel, "â".to_string())];
@@ -2100,6 +3540,7 @@ mod tests {
 𣈜;ngày;0
 ").0,
         );
+        e.always_ask_vowel = true;
         e.options.telex = true;
         // Đã gõ thanh (`ddos` đó) vẫn chọn được chữ khác thanh, khác dấu mũ / móc (đỏ, đồ), thay đúng chữ đã gõ;
         // không lẫn vần khác của chữ gõ dở (đoàn).
@@ -2129,6 +3570,7 @@ mod tests {
 官員;quan viên;0
 ").0,
         );
+        e.always_ask_vowel = true;
         e.options.telex = true;
         let qu = [(Part::Initial, "qu".to_string())];
         assert_eq!(e.narrow("qv", &qu), Some((Part::Vowel, vec!["a".into(), "ô".into()])));
@@ -2197,6 +3639,7 @@ mod tests {
         let mut e = Engine::new(
             Dictionary::from_text("碎;tôi;0\n最;tối;0\n罪;tội;0\n蘇;tô;0\n損;tốn;0\n細;tơi;0\n").0,
         );
+        e.always_ask_vowel = true;
         e.options.telex = true;
         let o = [(Part::Initial, "t".to_string()), (Part::Vowel, "ô".to_string())];
         assert_eq!(e.narrow("tooi", &o), Some((Part::Nucleus, strs(&["ôi"]))));

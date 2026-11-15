@@ -139,6 +139,55 @@ fun Context.hanNomText(text: CharSequence): CharSequence {
     return SpannableString(text).also { applyHanNomFont(it, typeface) }
 }
 
+/**
+ * TextView một dòng, chữ dài quá thì tự cắt ở cuối bằng "…" phông Latin (Roboto). Dấu "…" mà TextView tự chèn
+ * (`ellipsize`) lấy phông của chữ Hán bị cắt nên trông như "。。。" (người dùng muốn 2026-11-15: dùng "…").
+ */
+class EllipsisTextView(context: Context) : TextView(context) {
+    /** Chữ đầy đủ (trước khi cắt). */
+    private var source: CharSequence = ""
+    /** Đang đặt chữ đã cắt (không phải chữ mới từ bên ngoài). */
+    private var fitting = false
+
+    override fun setText(text: CharSequence?, type: BufferType?) {
+        if (!fitting) source = text ?: ""
+        super.setText(text, type)
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        val full = source
+        val avail = (measuredWidth - totalPaddingLeft - totalPaddingRight).toFloat()
+        // Chỉ cắt chữ một dòng (nhiều dòng thì để TextView xuống dòng như thường).
+        val fits = maxLines != 1 || avail <= 0f || android.text.Layout.getDesiredWidth(full, paint) <= avail
+        val shown: CharSequence = if (fits) full else {
+            fun cut(n: Int): CharSequence = android.text.SpannableStringBuilder(full, 0, n).append(
+                SpannableString(ELLIPSIS).apply { setSpan(FontSpan(Typeface.DEFAULT), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) },
+            )
+            // Phần đầu dài nhất còn vừa (không cắt giữa cặp surrogate).
+            var lo = 0
+            var hi = full.length
+            while (lo < hi) {
+                val m = (lo + hi + 1) / 2
+                if (android.text.Layout.getDesiredWidth(cut(m), paint) <= avail) lo = m else hi = m - 1
+            }
+            if (lo in 1 until full.length && Character.isLowSurrogate(full[lo])) lo--
+            cut(lo)
+        }
+        // Chỉ đặt lại khi khác chữ đang hiện, kẻo đo lại mãi.
+        if (shown.toString() != text.toString()) {
+            fitting = true
+            super.setText(shown, BufferType.SPANNABLE)
+            fitting = false
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        }
+    }
+
+    private companion object {
+        const val ELLIPSIS = "…"
+    }
+}
+
 /** Cho ô nhập: gắn lại phông Hán Nôm mỗi khi chữ thay đổi. */
 fun TextView.useHanNomFont() {
     val typeface = context.hanNomTypeface() ?: return

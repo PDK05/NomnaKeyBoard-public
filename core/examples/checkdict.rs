@@ -31,10 +31,17 @@ fn main() {
         None => println!("lưu lại khác số dòng: {} / {}", saved.lines().count(), data.lines().count()),
         Some((i, (a, b))) => println!("lưu lại khác ở dòng dữ liệu {}: {b:?} → {a:?}", i + 1),
     }
-    let engine = Engine::new(dict);
+    let mut engine = Engine::new(dict);
+    // TELEX=1: tra như bàn phím kiểu Telex (phím cách là dấu tách `'`).
+    engine.options.telex = std::env::var("TELEX").is_ok();
     for keys in std::env::args().skip(1) {
         // Như bàn phím: chuẩn hoá chuỗi phím Telex trước khi tra.
         let list: Vec<String> = engine.candidates(&normalize(&keys, false)).iter().take(8).map(|c| c.text.clone()).collect();
         println!("{keys:>10}: {}", list.join(" "));
+        // BEFORE=中: thêm các chữ nối tiếp chữ đã chọn đó (như bàn phím sau khi chọn phần đầu).
+        if let Ok(before) = std::env::var("BEFORE") {
+            let after: Vec<String> = engine.after(&before, &normalize(&keys, false)).iter().take(8).map(|(c, _, r)| format!("{}({}/{})", c.text, r, c.consumed)).collect();
+            println!("{:>10}  sau {before}: {}", "", after.join(" "));
+        }
     }
 }

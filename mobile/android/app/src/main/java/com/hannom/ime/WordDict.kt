@@ -39,16 +39,8 @@ class WordDict private constructor(private val context: Context, private val nam
     private var dirty = false
 
     init {
-        val text = runCatching { context.assets.open("dict/$name.txt").bufferedReader().use { it.readText() } }.getOrDefault("")
-        val freqs = LinkedHashMap<String, Int>()
-        for (raw in text.lineSequence()) {
-            val line = raw.trim()
-            if (line.isEmpty() || line.startsWith("#")) continue
-            val parts = line.split(';', '\t', ',')
-            val word = Normalizer.normalize(parts[0].trim().split(Regex("\\s+")).joinToString(" "), Normalizer.Form.NFC)
-            if (word.isEmpty() || word in freqs) continue
-            freqs[word] = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: 0
-        }
+        // Các từ điển đang bật của ngôn ngữ này ([Dictionaries]), gộp lại: từ trùng lấy ở từ điển trước.
+        val freqs = Lang.of(name)?.let { WordStore.merged(context, it) } ?: LinkedHashMap()
         entries = freqs.map { (w, f) -> Entry(w, fold(w), f, w.count { it == ' ' } + 1) }.sortedBy { it.key }.toTypedArray()
         readCounts(learnedFile, learned)
         readCounts(pairsFile, pairs)
@@ -230,6 +222,17 @@ class WordDict private constructor(private val context: Context, private val nam
          * từ điển tiếng Anh (lớn gấp mười).
          */
         private val cache = java.util.concurrent.ConcurrentHashMap<String, Lazy<WordDict>>()
+
+        /**
+         * Từ điển của [name] vừa đổi (sửa, bật / tắt, thêm, xoá): lưu phần đã học rồi nạp lại ở luồng nền nếu đã
+         * từng nạp.
+         */
+        fun reload(context: Context, name: String) {
+            val old = cache.remove(name) ?: return
+            if (old.isInitialized()) old.value.save()
+            val app = context.applicationContext
+            Thread { get(app, name) }.start()
+        }
 
         fun get(context: Context, name: String): WordDict {
             val app = context.applicationContext

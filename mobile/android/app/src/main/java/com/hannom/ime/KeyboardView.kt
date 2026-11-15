@@ -800,7 +800,10 @@ class KeyboardView(context: Context, private val listener: Listener, private val
     private fun perform(k: Key) {
         when (k.type) {
             KeyType.CHAR -> {
-                listener.onChar(label(k), literal = k.literal)
+                // Ký hiệu ở hàng số (Shift), trang ?123, =\< và bàn phím số là Latin đúng như nhãn, không đổi thành dấu
+                // câu Hán (người dùng muốn 2026-11-14); chỉ phẩy, chấm của trang chữ Hán Nôm mới đổi.
+                val latin = k.literal || page != Page.LETTERS || shiftedDigit(k) != null
+                listener.onChar(label(k), literal = latin)
                 if (shift == Shift.ONCE) shift = Shift.OFF
             }
             KeyType.SHIFT -> {

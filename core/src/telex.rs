@@ -85,7 +85,13 @@ impl State {
                 let oo = k == 'o' && syllable::nucleus_range(&self.lower()) == (i, i + 2);
                 self.stopped = !(oo && syllable::check(&self.lower(), self.tone, Check::Prefix));
             }
-            Some(i) => self.letters[i].ch = hat,
+            Some(i) => {
+                self.letters[i].ch = hat;
+                // ươ + o → uô (`muoonwo`: mươn → muôn; người dùng muốn 2026-11-15): ư trước ô thì bỏ móc, ưô không là vần.
+                if hat == 'ô' && i > ns && l[i - 1] == 'ư' {
+                    self.letters[i - 1].ch = 'u';
+                }
+            }
             None => self.push(key),
         }
     }
@@ -109,8 +115,16 @@ impl State {
             };
             let mut trial = l.clone();
             trial[i] = target;
+            // ươ + q → uô, như ươ + o ([`Self::apply_circumflex`]).
+            let unhorn = target == 'ô' && i > ns && l[i - 1] == 'ư';
+            if unhorn {
+                trial[i - 1] = 'u';
+            }
             if syllable::check(&trial, self.tone, Check::Prefix) {
                 self.letters[i].ch = target;
+                if unhorn {
+                    self.letters[i - 1].ch = 'u';
+                }
                 return;
             }
         }
@@ -130,6 +144,28 @@ impl State {
         }
     }
 
+    /// Telex tự do: `q` sau uo / ươ / uô là uơ (`huoq` → huơ, `thuoqr` → thuở; người dùng muốn 2026-11-16); gõ lần
+    /// nữa thì huỷ dấu, ra phím thô (`huoqq` → huoq). Không có uo thì `q` là chữ q.
+    fn apply_uo(&mut self, key: char) {
+        let l = self.lower();
+        let (ns, ne) = syllable::nucleus_range(&l);
+        for i in ns..ne.saturating_sub(1) {
+            if text::base(l[i]) != 'u' || text::base(l[i + 1]) != 'o' {
+                continue;
+            }
+            if l[i] == 'u' && l[i + 1] == 'ơ' {
+                self.letters[i + 1].ch = 'o';
+                self.push(key);
+                self.stopped = true;
+            } else {
+                self.letters[i].ch = 'u';
+                self.letters[i + 1].ch = 'ơ';
+            }
+            return;
+        }
+        self.push(key);
+    }
+
     /// `w`: uo → ươ, a → ă, o → ơ, u → ư; đứng riêng thì thành ư; gõ lần nữa để huỷ.
     fn apply_w(&mut self, key: char) {
         let l = self.lower();
@@ -140,23 +176,17 @@ impl State {
             return;
         }
         for i in ns..ne - 1 {
-            // `w` lần ba trên uơ thì huỷ dấu, ra phím thô (`uowww` → uow), không lật lại ươ: gõ `w` liên tục
-            // không lật ươ ↔ uơ mãi (phím xoá cũng lật theo).
+            // `w` trên uơ (gõ bằng `q`) lật sang ươ: nguơn + w → ngươn, như cô + w → cơ (người dùng muốn 2026-11-16).
+            // `ww` trên ươ thì huỷ dấu, nên gõ `w` liên tục không lật ươ ↔ uơ mãi.
             if !self.hannom && l[i] == 'u' && l[i + 1] == 'ơ' {
-                self.letters[i + 1].ch = 'o';
-                self.push(key);
-                self.stopped = true;
+                self.letters[i].ch = 'ư';
                 return;
             }
-            // `w` lần hai trên ươ thành uơ (`uoww` → uơ, `thuowwr` → thuở). Telex tự do: chỉ khi uơ còn là vần
-            // được (`nguowiww` không thành nguơi mà huỷ dấu như Unikey).
-            if l[i] == 'ư' && l[i + 1] == 'ơ' {
-                let mut trial = l.clone();
-                trial[i] = 'u';
-                if self.hannom || syllable::check(&trial, self.tone, Check::Prefix) {
-                    self.letters[i].ch = 'u';
-                    return;
-                }
+            // Kiểu Hán Nôm: `w` lần hai trên ươ thành uơ (`uoww` → uơ). Telex tự do thì `ww` huỷ dấu như Unikey:
+            // huơ, khuơ, thuở chỉ cần một `w` ([`Self::render`]), nguơn gõ `q` (người dùng muốn 2026-11-16).
+            if self.hannom && l[i] == 'ư' && l[i + 1] == 'ơ' {
+                self.letters[i].ch = 'u';
+                return;
             }
             if text::base(l[i]) == 'u' && text::base(l[i + 1]) == 'o' && !(l[i] == 'ư' && l[i + 1] == 'ơ') {
                 self.letters[i].ch = 'ư';
@@ -253,6 +283,7 @@ impl State {
                 // Kiểu Hán Nôm: aa / ee / oo giữ nguyên hai chữ (xoong), â ê ô chỉ qua `q`.
                 'a' | 'e' | 'o' if !self.hannom => self.apply_circumflex(k, key),
                 'q' if has_vowel && self.hannom => self.apply_hat(key),
+                'q' if has_vowel => self.apply_uo(key),
                 // Kiểu Hán Nôm: dấu chỉ là dấu khi đứng sau nguyên âm; `w` trước đó là chữ w (không ra ư).
                 'w' if !has_vowel && self.hannom => self.push(key),
                 'w' => self.apply_w(key),
@@ -278,6 +309,14 @@ impl State {
     fn render(&self, style: ToneStyle) -> String {
         let l = self.lower();
         let (ns, ne) = syllable::nucleus_range(&l);
+        // Telex tự do: ươ không đứng cuối chữ; sau h / kh / th mà chưa có âm cuối thì là uơ (`huow` → huơ, `khuow` →
+        // khuơ, `thuowr` → thuở; người dùng muốn 2026-11-16). Gõ tiếp âm cuối thì lại là ươ (hương).
+        let open_uo = !self.hannom
+            && ne == l.len()
+            && ne >= ns + 2
+            && l[ne - 2] == 'ư'
+            && l[ne - 1] == 'ơ'
+            && matches!(&l[..ne - 2], ['h'] | ['k', 'h'] | ['t', 'h']);
         let pos = if self.tone == Tone::Level {
             None
         } else if ne > ns {
@@ -289,7 +328,8 @@ impl State {
             .iter()
             .enumerate()
             .map(|(i, letter)| {
-                let c = if pos == Some(i) { text::with_tone(letter.ch, self.tone) } else { letter.ch };
+                let ch = if open_uo && i == ne - 2 { 'u' } else { letter.ch };
+                let c = if pos == Some(i) { text::with_tone(ch, self.tone) } else { ch };
                 if letter.upper {
                     text::upper(c)
                 } else {
@@ -304,6 +344,11 @@ impl State {
 /// Chữ hết là tiếng Việt thì giữ phần đã ghép, các phím sau nối thêm nguyên như gõ: `soovanh` → sôvanh,
 /// `ddcm` → đcm, `windows` → windows.
 pub fn compose(keys: &str, style: ToneStyle) -> String {
+    if !telex_valid_seq(keys) {
+        if let Some(r) = retone(keys) {
+            return compose(&r, style);
+        }
+    }
     let mut st = State::default();
     let mut before = State::default();
     let chars: Vec<char> = keys.chars().collect();
@@ -374,11 +419,48 @@ pub fn compose_joined(keys: &str, style: ToneStyle, dz: bool) -> String {
 /// Chuỗi phím là (phần đầu của) một chữ tiếng Việt theo Telex tự do của [`compose`]. Nguyên âm gõ lại cách
 /// phụ âm vẫn ghép dấu mũ như Unikey (`thana` → thân, `coongo` → côông): chữ chỉ tách ở phím cách.
 fn telex_valid(keys: &str) -> bool {
+    telex_valid_seq(keys) || retone(keys).is_some()
+}
+
+/// Như [`telex_valid`], chỉ theo đúng thứ tự phím.
+fn telex_valid_seq(keys: &str) -> bool {
     let mut st = State::default();
     keys.chars().all(|key| {
         st.feed(key);
         !st.invalid
     })
+}
+
+/// Đổi thanh sau phụ âm cuối (người dùng muốn 2026-11-16): `mooft` là mồt (huyền không đi với t), gõ thêm `j` thì là
+/// một, như đã gõ `moofjt`. Trả chuỗi phím theo thứ tự đó (`moofjt`) nếu: phím cuối là đúng một phím thanh, ngay trước
+/// nó là phụ âm cuối, phần trước phụ âm là chữ tiếng Việt có nguyên âm mang thanh khác, và đổi thanh thì cả chữ hợp lệ.
+/// Chỉ một phím thanh, thanh phải khác thanh cũ: không có vòng lặp (`mooftjf` không quay lại mồt, `mooftjj` không
+/// huỷ dấu).
+fn retone(keys: &str) -> Option<String> {
+    let chars: Vec<char> = keys.chars().collect();
+    let (&k, body) = chars.split_last()?;
+    let tone = Tone::from_telex(k.to_ascii_lowercase())?;
+    let is_coda = |c: &&char| {
+        let l = c.to_ascii_lowercase();
+        l.is_ascii_alphabetic() && !text::is_vowel(l) && Tone::from_telex(l).is_none() && !matches!(l, 'w' | 'q' | 'z')
+    };
+    let t = body.iter().rev().take_while(is_coda).count();
+    if t == 0 || t == body.len() {
+        return None;
+    }
+    let (head, coda) = body.split_at(body.len() - t);
+    let mut st = State::default();
+    for &c in head {
+        st.feed(c);
+        if st.invalid || st.stopped {
+            return None;
+        }
+    }
+    if !st.has_vowel() || st.tone == tone {
+        return None;
+    }
+    let r: String = head.iter().chain(std::iter::once(&k)).chain(coda).collect();
+    telex_valid_seq(&r).then_some(r)
 }
 
 /// Các chữ của chuỗi phím gõ liền theo Telex tự do (bàn phím Hán Nôm kiểu Telex): mỗi phím ghép tiếp vào
@@ -395,6 +477,20 @@ pub fn telex_words(keys: &str) -> Vec<String> {
             continue;
         }
         let trial = format!("{word}{c}");
+        // Phụ âm cuối vừa tách khỏi chữ trước vì sai thanh (`mooft` → mồ + t), rồi gõ phím thanh: đổi thanh mà cả chữ
+        // hợp lệ thì gộp lại (`mooftj` → một, [`retone`]).
+        if Tone::from_telex(c.to_ascii_lowercase()).is_some()
+            && !word.is_empty()
+            && !word.chars().any(|ch| text::is_vowel(text::lower(ch)))
+            && out.last().is_some_and(|p| p != "'")
+        {
+            let joined = format!("{}{word}{c}", out.last().map_or("", String::as_str));
+            if !telex_valid_seq(&joined) && retone(&joined).is_some() {
+                out.pop();
+                word = joined;
+                continue;
+            }
+        }
         // `w` đứng một mình là chữ ư của gõ tắt (`wdd` → w đ, ưu đãi): phụ âm sau nó mở chữ mới; phím dấu
         // (`ws` ứ) thì vẫn ghép.
         let lone_w = word.eq_ignore_ascii_case("w")
@@ -449,96 +545,49 @@ pub fn display_telex(keys: &str, style: ToneStyle) -> String {
     out
 }
 
-/// Phím xoá của bàn phím Hán Nôm kiểu Telex: bỏ phím cuối, nhưng phím cuối là phím dấu thanh đã thay một dấu
-/// trước đó thì xoá hẳn dấu thanh của chữ, không lùi về dấu cũ (`asf` à → `a`, không phải `as` á).
+/// Phím xoá của bàn phím Hán Nôm kiểu Telex: bỏ chữ cái cuối của chữ đang hiện, kèm dấu của nó, từ phải qua
+/// (người dùng muốn 2026-11-16): `trường` xoá lần lượt ra trườn, trườ, trư, tr, t. Không xoá theo phím (bỏ phím
+/// dấu thanh trước, lật dấu phụ…): mươn xoá ra mươ, cô ra c. Dấu `'` cuối thì bỏ dấu đó.
 pub fn backspace_telex(keys: &str, style: ToneStyle) -> String {
-    // Chữ cuối đang thô (đã huỷ dấu): bỏ chữ cái cuối của chữ đang hiện. Phím mới phải hiện đúng chữ đó khi tách
-    // chữ kiểu Telex (`exxchanging` xoá ra `exchangin` thì tách thành ẽ chan gin), không thì giữ thô ([`RAW`]).
-    if let Some(last) = telex_words(keys).last().filter(|w| *w != "'") {
-        if let Some(raw) = backspace_raw(last, style) {
-            let head: String = keys.chars().take(keys.chars().count() - last.chars().count()).collect();
-            let mut want = display_telex(keys, style);
-            want.pop();
-            let out = head.clone() + &raw;
-            if raw.is_empty() || display_telex(&out, style) == want {
-                return out;
-            }
-            let mut shown = compose(last, style);
-            shown.pop();
-            return format!("{head}{RAW}{shown}");
-        }
-    }
-    if let Some(last) = telex_words(keys).last().filter(|w| *w != "'") {
-        if let Some(rebuilt) = backspace_flipped_mark(last, style) {
-            let head: String = keys.chars().take(keys.chars().count() - last.chars().count()).collect();
-            return head + &rebuilt;
-        }
-    }
-    let mut chars: Vec<char> = keys.chars().collect();
-    let Some(last) = chars.pop() else {
+    let words = telex_words(keys);
+    let Some(last) = words.last() else {
         return String::new();
     };
-    if Tone::from_telex(last).is_none() {
-        return chars.into_iter().collect();
+    let head: String = keys.chars().take(keys.chars().count() - last.chars().count()).collect();
+    if last == "'" {
+        return head;
     }
-    let split = |w: &[char]| text::split_syllable(&compose(&w.iter().collect::<String>(), style).to_lowercase());
-    // Chữ cuối theo [`telex_words`] (gồm cả phím vừa xoá); các chữ trước không bị ảnh hưởng.
-    let start = keys.chars().count() - telex_words(keys).last().map_or(0, |w| w.chars().count());
-    if start > chars.len() {
-        return chars.into_iter().collect();
-    }
-    let Some((letters, _)) = split(&chars[start..]) else {
-        return chars.into_iter().collect();
-    };
-    // Còn dấu thanh thì bỏ dần các phím dấu thanh (từ cuối) mà chữ vẫn giữ nguyên chữ cái.
-    while let Some((l, tone)) = split(&chars[start..]) {
-        if tone == Tone::Level || l != letters {
-            break;
+    let mut want = display_telex(keys, style);
+    want.pop();
+    // Chữ đang thô (đã huỷ dấu): phím của chữ còn lại do [`backspace_raw`] dựng.
+    let rest = backspace_raw(last, style).unwrap_or_else(|| {
+        let mut shown = compose(last, style);
+        shown.pop();
+        if shown.is_empty() {
+            return String::new();
         }
-        let Some(i) = (start..chars.len()).rev().find(|&i| {
-            Tone::from_telex(chars[i]).is_some() && {
-                let mut w = chars[start..].to_vec();
-                w.remove(i - start);
-                split(&w).is_some_and(|(l2, _)| l2 == letters)
-            }
-        }) else {
-            break;
-        };
-        chars.remove(i);
+        // Phím Telex của chữ còn lại (trườ → `truwowf`); vần oo phải gõ `ooo` (`oo` là ô).
+        let rebuilt = decompose(&shown);
+        [rebuilt.clone(), rebuilt.replace("oo", "ooo").replace("OO", "OOO")]
+            .into_iter()
+            .find(|k| same_shown(&compose(k, style), &shown))
+            .unwrap_or_else(|| format!("{RAW}{shown}"))
+    });
+    let out = head.clone() + &rest;
+    // Phím mới phải hiện đúng chữ còn lại khi tách chữ kiểu Telex (không dính vào chữ trước), không thì giữ thô.
+    if rest.is_empty() || same_shown(&display_telex(&out, style), &want) {
+        return out;
     }
-    chars.into_iter().collect()
+    let mut shown = compose(last, style);
+    shown.pop();
+    format!("{head}{RAW}{shown}")
 }
 
-/// Phím cuối của chữ `word` chỉ đổi dấu phụ này sang dấu phụ khác (`coow`: cô → cơ, gõ xen kẽ `w` `o` lật qua lại):
-/// xoá thì bỏ hẳn dấu phụ đó, trả phím mới của chữ không còn dấu (`co`), không lùi về dấu cũ, để xoá liên tục không
-/// lật cô ↔ cơ mãi. Không phải trường hợp này thì `None` (xoá theo phím như thường).
-fn backspace_flipped_mark(word: &str, style: ToneStyle) -> Option<String> {
-    let mut before: Vec<char> = word.chars().collect();
-    let last = before.pop()?;
-    if Tone::from_telex(last).is_some() {
-        return None;
-    }
-    let now: Vec<char> = compose(word, style).chars().collect();
-    let before: Vec<char> = compose(&before.iter().collect::<String>(), style).chars().collect();
-    if now.len() != before.len() || now == before {
-        return None;
-    }
-    let mark = |c: char| text::split_tone(text::lower(c)).0;
-    let mut stripped = now.clone();
-    for i in (0..now.len()).filter(|&i| now[i] != before[i]) {
-        let (a, b) = (mark(now[i]), mark(before[i]));
-        if text::base(a) != text::base(b) || a == text::base(a) || b == text::base(b) {
-            return None;
-        }
-        let plain = text::with_tone(text::base(a), text::split_tone(text::lower(now[i])).1);
-        stripped[i] = if now[i].is_uppercase() { text::upper(plain) } else { plain };
-    }
-    if stripped == now {
-        return None;
-    }
-    let stripped: String = stripped.into_iter().collect();
-    let keys = decompose(&stripped);
-    (compose(&keys, style) == stripped).then_some(keys)
+/// Hai chữ hiện như nhau, coi ươ và uơ là một: hươn xoá ra hươ thì phím `huow` hiện huơ ([`State::render`]) vẫn được,
+/// không phải giữ thô.
+fn same_shown(a: &str, b: &str) -> bool {
+    let norm = |s: &str| s.replace('ư', "u").replace('Ư', "U");
+    a == b || norm(a) == norm(b)
 }
 
 /// Mọi chữ của chuỗi phím (theo [`telex_words`]) đều là tiếng Việt.
@@ -902,10 +951,10 @@ pub fn decompose(word: &str) -> String {
         if t != Tone::Level {
             tone = t;
         }
-        // uơ: `uow` là ươ, phải gõ `uoww` (xoá chữ sau uơ ra đúng uơ, không lùi về ươ).
+        // uơ: `uow` là ươ, uơ gõ `uoq` (xoá chữ sau uơ ra đúng uơ, không lùi về ươ).
         if b == 'ơ' && prev == Some('u') {
             keys.push(if c.is_uppercase() { 'O' } else { 'o' });
-            keys.push_str("ww");
+            keys.push('q');
             prev = Some(b);
             continue;
         }
@@ -1103,17 +1152,47 @@ mod tests {
 
     #[test]
     fn double_marks() {
-        // `ww` trên ươ ra uơ khi uơ là vần được (thuở); gõ nữa thì huỷ dấu (không lật lại ươ mãi).
-        assert_eq!(c("uoww"), "uơ");
-        assert_eq!(c("thuowwr"), "thuở");
-        assert_eq!(c("uowww"), "uow");
-        assert_eq!(c("nguownww"), "nguonw");
-        assert_eq!(c("nguownwwww"), "nguonwww");
-        // Xoá chữ cái cuối của nguơn ra nguơ (phím `nguoww`), không lùi về ngươn.
-        assert_eq!(decompose("nguơ"), "nguoww");
+        // huơ, khuơ, thuở, quơ: một `w` là đủ (ươ chưa có âm cuối sau h / kh / th là uơ; người dùng muốn 2026-11-16).
+        assert_eq!(c("huow"), "huơ");
+        assert_eq!(c("khuow"), "khuơ");
+        assert_eq!(c("thuowr"), "thuở");
+        assert_eq!(c("Thuowr"), "Thuở");
+        assert_eq!(c("quow"), "quơ");
+        // Có âm cuối thì vẫn là ươ.
+        assert_eq!(c("huowng"), "hương");
+        assert_eq!(c("huouw"), "hươu");
+        assert_eq!(c("thuowngf"), "thường");
+        assert_eq!(c("khuowus"), "khướu");
+        // Chữ khác giữ ươ: trườ đang gõ dở trường, mươ.
+        assert_eq!(c("truwowf"), "trườ");
+        assert_eq!(c("muow"), "mươ");
+        // Riêng ngươn / nguơn tách hẳn: ngươn gõ `w`, nguơn gõ `q`.
+        assert_eq!(c("nguown"), "ngươn");
+        assert_eq!(c("nguoqn"), "nguơn");
+        assert_eq!(c("huoq"), "huơ");
+        // q và w lật qua lại: nguơn + w → ngươn, ngươn + q → nguơn.
+        assert_eq!(c("nguoqnw"), "ngươn");
+        assert_eq!(c("nguownq"), "nguơn");
+        assert_eq!(c("nguoqnwq"), "nguơn");
+        // `ww` trên ươ huỷ dấu như Unikey; q / w lần nữa trên uơ cũng huỷ.
+        assert_eq!(c("uoww"), "uow");
+        assert_eq!(c("nguownw"), "nguonw");
+        assert_eq!(c("nguoqq"), "nguoq");
+        // q không sau uo là chữ q; qu đầu chữ vẫn là phụ âm.
+        assert_eq!(c("quan"), "quan");
+        assert_eq!(c("quoocs"), "quốc");
+        // Xoá hương lần lượt: hươn, huơ (gõ ng lại là hương), hu, h.
+        let mut k = "huowng".to_string();
+        for want in ["hươn", "huơ", "hu", "h"] {
+            k = backspace_telex(&k, ToneStyle::Old);
+            assert_eq!(display_telex(&k, ToneStyle::Old), want);
+            assert!(!k.contains(RAW), "{k:?}");
+        }
+        assert_eq!(display_telex(&format!("{}ng", backspace_telex("huown", ToneStyle::Old)), ToneStyle::Old), "hương");
+        // Xoá chữ cái cuối của nguơn ra nguơ (phím `nguoq`), không lùi về ngươn.
+        assert_eq!(decompose("nguơ"), "nguoq");
         assert_eq!(c(&decompose("nguơ")), "nguơ");
         assert_eq!(c(&decompose("thuở")), "thuở");
-        assert_eq!(c(&backspace_raw("nguownww", ToneStyle::Old).unwrap()), "nguon");
     }
 
     #[test]
@@ -1128,7 +1207,7 @@ mod tests {
         let back = backspace("vieetj", ToneStyle::Old);
         assert_eq!(c(&back), "việ");
         assert_eq!(c(&format!("{back}t")), "việt");
-        assert_eq!(c(&backspace("nguownw", ToneStyle::Old)), "nguơ");
+        assert_eq!(c(&backspace("nguoqn", ToneStyle::Old)), "nguơ");
         // Bàn phím Hán Nôm kiểu Telex: `exxchanging` (exchanging) xoá lùi không tách lại thành ẽ chan gin.
         let mut keys = "chuwxexxchanging".to_string();
         assert_eq!(display_telex(&keys, ToneStyle::Old), "chữ exchanging");
@@ -1179,14 +1258,33 @@ mod tests {
     }
 
     #[test]
-    fn backspace_does_not_flip_marks() {
+    fn o_after_uo_horn_drops_both_horns() {
         let style = ToneStyle::Old;
         let t = |k: &str| display_telex(k, style);
-        // Gõ xen kẽ w và o (cô ↔ cơ): xoá là mất dấu, không lật qua lại.
-        for keys in ["coow", "coowo", "coowowowowowo", "coowowowowow"] {
-            let back = backspace_telex(keys, style);
-            assert_eq!(t(&back), "co", "{keys}");
-            assert_eq!(t(&backspace_telex(&back, style)), "c", "{keys}");
+        // ươ + o → uô (mươn → muôn), w lần nữa lại ra ươ.
+        assert_eq!(t("muoonwo"), "muôn");
+        assert_eq!(t("muowno"), "muôn");
+        assert_eq!(t("uowo"), "uô");
+        assert_eq!(t("muoonwow"), "mươn");
+    }
+
+    #[test]
+    fn backspace_drops_shown_letters_right_to_left() {
+        let style = ToneStyle::Old;
+        let t = |k: &str| display_telex(k, style);
+        // Xoá lần lượt từng chữ cái đang hiện từ phải qua, kèm dấu của nó (người dùng muốn 2026-11-16).
+        let mut keys = "truwowngf".to_string();
+        for want in ["trườn", "trườ", "trư", "tr", "t", ""] {
+            keys = backspace_telex(&keys, style);
+            assert_eq!(t(&keys), want);
+        }
+        // Gõ tiếp sau khi xoá vẫn ghép như Telex (trườn + g → trường).
+        assert_eq!(t(&format!("{}g", backspace_telex("truwowngf", style))), "trường");
+        for (keys, want) in [
+            ("muoonw", "mươ"), ("muoonwo", "muô"), ("coow", "c"), ("coowo", "c"), ("Coowo", "C"), ("cow", "c"),
+            ("chuwxn", "chữ"), ("uoq", "u"),("uow", "ư"), ("vieetj", "việ"), ("chuwx'noom", "chữ'nô"),
+        ] {
+            assert_eq!(t(&backspace_telex(keys, style)), want, "{keys}");
         }
         // Xoá liên tục luôn hết chữ, không lặp.
         let mut keys = "chuwxcoowowowowowo".to_string();
@@ -1196,18 +1294,7 @@ mod tests {
             steps += 1;
             assert!(steps < 12, "{keys}");
         }
-        assert_eq!(t(&backspace_telex("aawawa", style)), "a");
-        // Giữ dấu thanh và chữ hoa.
-        assert_eq!(t(&backspace_telex("coowfo", style)), "cò");
-        assert_eq!(t(&backspace_telex("Coowo", style)), "Co");
-        // Chữ thường xoá theo phím như cũ.
-        assert_eq!(t(&backspace_telex("cow", style)), "co");
-        assert_eq!(t(&backspace_telex("coo", style)), "co");
-        assert_eq!(t(&backspace_telex("chuwxn", style)), "chữ");
-        // Vần uơ: xoá lần lượt, không kẹt.
-        assert_eq!(t(&backspace_telex("uoww", style)), "ươ");
-        assert_eq!(t(&backspace_telex("uow", style)), "uo");
-        // Quốc ngữ xoá theo chữ đang hiện, không lật.
+        // Quốc ngữ xoá theo chữ đang hiện.
         assert_eq!(c(&backspace("coowowo", style)), "c");
     }
 
@@ -1386,6 +1473,22 @@ mod tests {
         assert_eq!(display("trar", false), "traˀ");
         assert_eq!(display("quas", false), "quaˊ");
         assert_eq!(display("dis", true), "điˊ");
+    }
+
+    #[test]
+    fn retone_after_final_consonant() {
+        let d = |k: &str| display_telex(k, ToneStyle::Old);
+        assert_eq!(d("mooft"), "mồ t");
+        assert_eq!(d("mooftj"), "một");
+        assert_eq!(d("moofts"), "mốt");
+        assert_eq!(c("mooftj"), "một");
+        // Không vòng lặp: thanh sau đó không đổi lại, gõ lặp không huỷ dấu.
+        assert_eq!(d("mooftjf"), "một f");
+        assert_eq!(d("mooftjj"), "một j");
+        // Gõ liền vẫn tách như cũ.
+        assert_eq!(d("moofthu"), "mồ thu");
+        assert_eq!(d("macf"), "mac f");
+        assert_eq!(d("mootj"), "một");
     }
 
     #[test]

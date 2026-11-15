@@ -38,13 +38,7 @@ impl Entry {
     /// Kiểm tra và chuẩn hoá một mục từ điển.
     pub fn new(text: &str, reading: &str) -> Result<Entry, EntryError> {
         let text = text.trim();
-        let reading = reading
-            .nfc()
-            .collect::<String>()
-            .split_whitespace()
-            .map(|s| s.chars().map(text::lower).collect::<String>())
-            .collect::<Vec<_>>()
-            .join(" ");
+        let reading = normalize_reading(reading);
         if text.is_empty() {
             return Err(EntryError::EmptyText);
         }
@@ -95,6 +89,26 @@ impl Entry {
     pub fn initials(&self) -> String {
         self.key().split(' ').filter_map(|s| s.chars().next()).collect()
     }
+}
+
+/// Âm đọc NFC, chữ thường, các âm tiết cách nhau một dấu cách. Tệp từ điển hầu như đã đúng sẵn: kiểm tra nhanh
+/// rồi giữ nguyên, khỏi dựng lại chuỗi (nạp từ điển nhanh hơn).
+fn normalize_reading(reading: &str) -> String {
+    let tidy = !reading.starts_with(' ')
+        && !reading.ends_with(' ')
+        && !reading.contains("  ")
+        && reading.chars().all(|c| (c == ' ' || !c.is_whitespace()) && text::lower(c) == c)
+        && unicode_normalization::is_nfc_quick(reading.chars()) == unicode_normalization::IsNormalized::Yes;
+    if tidy {
+        return reading.to_string();
+    }
+    reading
+        .nfc()
+        .collect::<String>()
+        .split_whitespace()
+        .map(|s| s.chars().map(text::lower).collect::<String>())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn is_syllable(s: &str) -> bool {
@@ -220,6 +234,9 @@ pub struct Dictionary {
     phrases: BTreeMap<String, Vec<usize>>,
     /// Số mục của mỗi chữ.
     texts: HashMap<String, usize>,
+    /// Cụm ≥ 2 chữ (không phải mã gõ tắt) theo chữ đầu, để gợi ý tiếp theo chữ đã chọn (`函` → 函數…) khỏi duyệt
+    /// cả từ điển.
+    heads: HashMap<char, Vec<usize>>,
 }
 
 impl Dictionary {
@@ -312,18 +329,31 @@ impl Dictionary {
 
     fn index_entry(&mut self, i: usize) {
         let e = &self.entries[i];
-        *self.texts.entry(e.text.clone()).or_default() += 1;
-        if e.is_shortcut() {
+        match self.texts.get_mut(e.text.as_str()) {
+            Some(n) => *n += 1,
+            None => {
+                self.texts.insert(e.text.clone(), 1);
+            }
+        }
+        let phrase = e.reading.contains(' ');
+        // Có dấu cách thì không phải mã gõ tắt ([`is_shortcut`]), khỏi kiểm tra âm tiết.
+        if !phrase && !is_syllable(&e.reading) {
             self.shortcuts.entry(e.shortcut_key()).or_default().push(i);
             return;
         }
-        self.index.entry(e.key()).or_default().push(i);
-        if e.reading.contains(' ') {
-            self.phrases.entry(e.key()).or_default().push(i);
+        // Khoá bỏ dấu tính một lần cho mọi bảng tra (như [`Entry::key`], [`Entry::initials`]).
+        let key = e.key();
+        let initials: String = key.split(' ').filter_map(|s| s.chars().next()).collect();
+        if phrase {
+            self.phrases.entry(key.clone()).or_default().push(i);
+            let mut chars = e.text.chars();
+            if let (Some(first), Some(_)) = (chars.next(), chars.next()) {
+                self.heads.entry(first).or_default().push(i);
+            }
         } else {
-            self.syllables.entry(e.key()).or_default().push(i);
+            self.syllables.entry(key.clone()).or_default().push(i);
         }
-        let initials = e.initials();
+        self.index.entry(key).or_default().push(i);
         if initials.chars().count() >= 2 {
             self.initials.entry(initials).or_default().push(i);
         }
@@ -388,6 +418,7 @@ impl Dictionary {
         self.syllables.clear();
         self.phrases.clear();
         self.texts.clear();
+        self.heads.clear();
         for i in 0..self.entries.len() {
             self.index_entry(i);
         }
@@ -395,16 +426,14 @@ impl Dictionary {
 
     fn plan(&self, content: &str) -> (Vec<(Entry, u32)>, ImportReport) {
         let (entries, errors) = parse(content);
-        let mut seen = HashSet::new();
-        let mut fresh = Vec::new();
-        let mut duplicates = 0;
-        for (e, f) in entries {
-            if self.contains(&e) || !seen.insert(e.clone()) {
-                duplicates += 1;
-            } else {
-                fresh.push((e, f));
-            }
-        }
+        // Trùng với từ điển (rỗng thì khỏi tra) hay với dòng trước trong tệp: so bằng tham chiếu, khỏi chép mục.
+        let empty = self.entries.is_empty();
+        let keep: Vec<bool> = {
+            let mut seen = HashSet::new();
+            entries.iter().map(|(e, _)| (empty || !self.contains(e)) && seen.insert(e)).collect()
+        };
+        let duplicates = keep.iter().filter(|k| !**k).count();
+        let fresh: Vec<(Entry, u32)> = entries.into_iter().zip(keep).filter(|(_, k)| *k).map(|(e, _)| e).collect();
         let report = ImportReport { added: fresh.len(), duplicates, errors };
         (fresh, report)
     }
@@ -446,6 +475,15 @@ impl Dictionary {
     /// Các cụm từ có chữ cái đầu mỗi âm tiết là `initials` (vd. `vn`).
     pub fn lookup_initials<'a>(&'a self, initials: &str) -> impl Iterator<Item = (usize, &'a Entry)> + 'a {
         self.initials.get(initials).into_iter().flatten().map(|&i| (i, &self.entries[i]))
+    }
+
+    /// Vị trí (tăng dần) các cụm ≥ 2 chữ, không phải mã gõ tắt, có chữ đầu là một trong `firsts`.
+    pub fn phrases_starting_with(&self, firsts: &[char]) -> Vec<usize> {
+        let mut seen = HashSet::new();
+        let mut ids: Vec<usize> =
+            firsts.iter().filter(|c| seen.insert(**c)).flat_map(|c| self.heads.get(c).into_iter().flatten().copied()).collect();
+        ids.sort_unstable();
+        ids
     }
 
     /// Các chữ một âm tiết có khoá bắt đầu bằng `prefix` (đã bỏ dấu), kèm thứ tự trong từ điển.

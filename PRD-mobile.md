@@ -482,5 +482,19 @@ Cùng đợt (2026-11-17, chờ duyệt):
   luồng giao diện nạp từ điển ~663 → ~318 ms (**nhanh hơn 52%**: đọc 31 + nạp 287 ms); `rebase` ở nền 238 ms, xong 1,4 giây
   trước phím đầu; phím đầu (`onChar`) 46 ms, không phải chờ.
 
+**Bản 0.1.9 (2026-11-18, bản thử, release `v0.1.9-test`).** Gồm mọi sửa đổi ở trên từ 2026-11-17 (xoá trong bảng thả
+nhận lúc chạm, khung kính, chữ Latin ở vị trí 2, trang từ điển, khởi động) và đợt giao diện theo số đo Gboard trên điện
+thoại (2026-11-18):
+
+- Màn hình dọc: hàng phím mức "Vừa" 46 dp (trước 50; các mức 40 / 46 / 52), thanh gợi ý / công cụ 46 dp (trước 48), khe
+  giữa các hàng 8 dp; hàng số thấp hơn hàng chữ (0,932) và hàng phím cách cao hơn (1,068) như màn hình ngang; bàn phím số
+  khe 6 dp, phím cao hơn; emoji hàng cao 1,15 × bề rộng ô, cỡ emoji 0,755 × ô. Cỡ chữ trên phím giữ như cũ.
+- Thanh công cụ: icon ⊞ 28 dp, nút tròn góc phải 34 dp với icon 20 dp; các icon vẽ lại theo Gboard.
+- Bảng sửa văn bản che cả thanh công cụ, đầu bảng có nút ← về bàn phím và tên bảng (như bảng nhớ tạm).
+- Bảng tiện ích: thêm nút "Ngôn ngữ tiếp theo" (đổi bàn phím như chạm V / EN / 喃); nút ✎ là viên viền mảnh với bút chì
+  nét viền như Gboard.
+- Trang từ điển: màn hình ngang chừa tai thỏ và thanh điều hướng (nền thanh tiêu đề tràn qua); hộp thoại thêm / sửa nằm
+  trên bàn phím, không nháy khi bàn phím đang mở; trang danh sách ngôn ngữ bỏ giữ để chọn và mục xoá.
+
 Còn chậm (chưa sửa): tra gợi ý khi gõ ở luồng nền trên điện thoại trung bình 43 ms, 39% số lần > 50 ms (gợi ý hiện trễ,
 phím không khựng); mở bảng tra cột trái 107–129 ms.

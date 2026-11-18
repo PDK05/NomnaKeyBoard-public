@@ -220,19 +220,21 @@ pub unsafe extern "system" fn Java_com_hannom_ime_NativeCore_candidates(
     let out = guard(String::new(), || {
         let e = engine(handle);
         let cands = if quoc_ngu == JNI_TRUE { e.readings(&keys) } else { e.candidates(&keys) };
-        candidate_records(&cands, limit)
+        candidate_records(e, &cands, limit)
     });
     to_java(env, &out)
 }
 
-/// Mỗi gợi ý một bản ghi: chữ, âm đọc, số phím, gõ tắt, vị trí tách âm tiết, ghép câu.
-fn candidate_records(cands: &[hannom_core::Candidate], limit: jint) -> String {
+/// Mỗi gợi ý một bản ghi: chữ, âm đọc, số phím, gõ tắt, vị trí tách âm tiết, ghép câu, độ phổ biến (0 nếu không phải một
+/// mục từ điển, như câu ghép).
+fn candidate_records(e: &hannom_core::Engine, cands: &[hannom_core::Candidate], limit: jint) -> String {
     let records: Vec<String> = cands
         .iter()
         .take(limit.max(0) as usize)
         .map(|c| {
             let breaks: Vec<String> = c.breaks.iter().map(usize::to_string).collect();
-            format!("{}{US}{}{US}{}{US}{}{US}{}{US}{}", c.text, c.reading, c.consumed, u8::from(c.abbreviated), breaks.join(","), u8::from(c.joined))
+            let freq = if c.joined { 0 } else { e.dict.freq_of(&c.text, &c.reading).unwrap_or(0) };
+            format!("{}{US}{}{US}{}{US}{}{US}{}{US}{}{US}{}", c.text, c.reading, c.consumed, u8::from(c.abbreviated), breaks.join(","), u8::from(c.joined), freq)
         })
         .collect();
     records.join(&RS.to_string())
@@ -319,7 +321,7 @@ pub unsafe extern "system" fn Java_com_hannom_ime_NativeCore_candidatesNarrowed(
     let out = guard(String::new(), || {
         let e = engine(handle);
         let cands = if locks.is_empty() { e.candidates_narrowed(&keys, &picked) } else { e.candidates_locked(&keys, &before, &locks, &picked) };
-        candidate_records(&cands, limit)
+        candidate_records(e, &cands, limit)
     });
     to_java(env, &out)
 }

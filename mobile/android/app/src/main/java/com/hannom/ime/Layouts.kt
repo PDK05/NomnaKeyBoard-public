@@ -46,6 +46,11 @@ class Key(
     val isPill: Boolean = type == KeyType.ENTER || type == KeyType.TO_SYMBOLS || type == KeyType.TO_LETTERS,
     /** Icon nhỏ phía trên chữ của phím, chữ dịch xuống (vd. mặt cười trên phím phẩy: giữ để mở emoji). */
     val hintIcon: Int? = null,
+    /**
+     * Số nhỏ ở góc trên phải phím (hàng q–p khi tắt hàng số, như Gboard); giữ phím thì bảng có số đó, chọn sẵn
+     * ([Layouts.noNumberRowPopup]).
+     */
+    val hint: String? = null,
     /** Phím trong cột phép tính của bàn phím số: chung một nền, xếp dọc ([KeyboardView] tự đặt chỗ). */
     val rail: Boolean = false,
     /** Chèn đúng nhãn, không đổi thành dấu câu Hán (các phím tính toán của bàn phím số). */
@@ -187,7 +192,74 @@ object Layouts {
         "0" to Popup(listOf(listOf("∅", "ⁿ", "⁰")), 0, 2),
     )
 
-    private fun letter(c: String) = Key(c, grid = letterPopups[c], vietnameseOnly = true)
+    private fun letter(c: String, hint: String? = null) = Key(c, grid = letterPopups[c], vietnameseOnly = true, hint = hint)
+
+    /**
+     * Bảng giữ phím hàng q–p khi tắt hàng số, chép từ Gboard (điện thoại 2026-11-18): phụ âm chỉ có số; nguyên âm là
+     * bảng chữ có dấu, số ở ô ngay trên phím (chọn sẵn), thứ tự các ô khác lúc có hàng số.
+     */
+    private val quocNguNoNumberRow = mapOf(
+        "e" to Popup(listOf(listOf("ễ", "ế", "ể", "ệ"), listOf("ê", "ẽ", "ẹ", "ề"), listOf("é", "3", "è", "ẻ")), 2, 1),
+        "u" to Popup(listOf(listOf("ữ", "ứ", "ử", "ự"), listOf("ư", "ũ", "ụ", "ừ"), listOf("ú", "7", "ù", "ủ")), 2, 1),
+        "o" to Popup(
+            listOf(
+                listOf("", "", "ợ", "ỡ", "ở"),
+                listOf("ớ", "ờ", "ơ", "ộ", "ỗ"),
+                listOf("ổ", "ố", "ồ", "ô", "ọ"),
+                listOf("õ", "ỏ", "ó", "ò", "9"),
+            ),
+            3, 4,
+        ),
+        "y" to Popup(listOf(listOf("ỵ", "ỷ", "ỹ"), listOf("ý", "6", "ỳ")), 1, 1),
+        "i" to Popup(listOf(listOf("ị", "ỉ", "ĩ"), listOf("í", "8", "ì")), 1, 1),
+    )
+    private val englishNoNumberRow = mapOf(
+        "e" to Popup(listOf(listOf("ē", "ê", "ë"), listOf("è", "3", "é")), 1, 1),
+        "u" to Popup(listOf(listOf("ū", "ü", "ù"), listOf("û", "7", "ú")), 1, 1),
+        "i" to Popup(listOf(listOf("ì", "ï", "ī"), listOf("î", "8", "í")), 1, 1),
+        "o" to Popup(listOf(listOf("", "õ", "ō", "ø", "œ"), listOf("ò", "ö", "ô", "ó", "9")), 1, 4),
+    )
+
+    /** Bảng giữ phím [key] (hàng q–p, có số [Key.hint]) khi tắt hàng số. */
+    fun noNumberRowPopup(key: Key, style: KeyboardStyle): Popup {
+        val digit = key.hint.orEmpty()
+        val table = when (style) {
+            KeyboardStyle.VIETNAMESE -> quocNguNoNumberRow
+            KeyboardStyle.ENGLISH -> englishNoNumberRow
+            KeyboardStyle.HAN_NOM -> return hanNomNoNumberRow(key.label, digit)
+        }
+        return table[key.label] ?: single(digit)
+    }
+
+    /**
+     * Bàn phím Hán Nôm khi tắt hàng số (người dùng đặt 2026-11-18): phụ âm thêm số vào đầu (`1 w W`; `p` sát mép phải
+     * nên ngược lại: `P p 0`); nguyên âm thay hàng chữ thường / hoa dưới cùng bằng chữ hoa, số, chữ thường (`E 3 e`),
+     * riêng `o` sát mép phải là `O o 9`; số ở ngay trên phím, luôn chọn sẵn.
+     */
+    private fun hanNomNoNumberRow(c: String, digit: String): Popup {
+        val base = letterPopups[c] ?: return single(digit)
+        val up = c.uppercase()
+        if (c !in VOWELS) {
+            return if (base.col == 0) Popup(listOf(listOf(digit, c, up)), 0, 0)
+            else Popup(listOf(listOf(up, c, digit)), 0, 2)
+        }
+        val cols = base.columns
+        val bottom = MutableList(cols) { "" }
+        val col = base.col
+        if (col == cols - 1) {
+            // Chữ sát mép phải (`o`): `O o 9`, số ở cột ngoài cùng, ngay trên phím (người dùng đặt).
+            bottom[col - 2] = up
+            bottom[col - 1] = c
+            bottom[col] = digit
+            return Popup(base.rows.dropLast(1) + listOf(bottom), base.rows.size - 1, col)
+        }
+        // Số ở cột của chữ đang chọn sẵn (ngay trên phím); hai bên là chữ hoa, chữ thường.
+        val mid = col.coerceAtLeast(1)
+        bottom[mid - 1] = up
+        bottom[mid] = digit
+        bottom[mid + 1] = c
+        return Popup(base.rows.dropLast(1) + listOf(bottom), base.rows.size - 1, mid)
+    }
 
     private fun digits() = "1234567890".map { Key(it.toString(), grid = digitPopups[it.toString()]) }
 
@@ -282,16 +354,19 @@ object Layouts {
         Key("", KeyType.ENTER, weight = 1.5f),
     )
 
-    /** Trang chữ; kiểu Gboard ([KeyboardStyle.gboard]) thì phím chấm có bảng dấu câu như Gboard. */
-    fun letters(style: KeyboardStyle = KeyboardStyle.HAN_NOM): List<List<Key>> = listOf(
-        digits(),
-        "qwertyuiop".map { letter(it.toString()) },
+    /**
+     * Trang chữ; kiểu Gboard ([KeyboardStyle.gboard]) thì phím chấm có bảng dấu câu như Gboard. [numberRow]: có hàng
+     * số trên cùng (mục "Hàng số" của Lựa chọn ưu tiên, như Gboard).
+     */
+    fun letters(style: KeyboardStyle = KeyboardStyle.HAN_NOM, numberRow: Boolean = true): List<List<Key>> = listOfNotNull(
+        if (numberRow) digits() else null,
+        // Tắt hàng số: hàng q–p có số nhỏ 1–0, giữ phím ra số (như Gboard).
+        "qwertyuiop".mapIndexed { i, c -> letter(c.toString(), if (numberRow) null else "1234567890"[i].toString()) },
         listOf(Key("", KeyType.SPACER, 0.5f)) + "asdfghjkl".map { letter(it.toString()) } +
             Key("", KeyType.SPACER, 0.5f),
         listOf(Key("", KeyType.SHIFT, 1.5f)) + "zxcvbnm".map { letter(it.toString()) } +
             Key("", KeyType.DELETE, 1.5f),
-        if (style.gboard) bottomRow(Key("?123", KeyType.TO_SYMBOLS, 1.5f), right = letterPeriod)
-        else bottomRow(Key("?123", KeyType.TO_SYMBOLS, 1.5f)),
+        bottomRow(Key("?123", KeyType.TO_SYMBOLS, 1.5f), right = if (style.gboard) letterPeriod else period),
     )
 
     /** Trang ?123 của bàn phím Hán Nôm, chép từ Gboard 拼音. */

@@ -191,7 +191,11 @@ class OverlayView(context: Context) : View(context) {
                 canvas.drawText(s, textPaint.centerXFor(s, cx), cy - (textPaint.ascent() + textPaint.descent()) / 2, textPaint)
             }
         }
+        extra?.invoke(canvas)
     }
+
+    /** Vẽ thêm trên cùng (bảng giữ emoji, [EmojiPanel.drawTones]). */
+    var extra: ((Canvas) -> Unit)? = null
 
     private companion object {
         /** Khoảng cách từ mép bảng ký tự mà kéo quá đó thì huỷ (dp). */

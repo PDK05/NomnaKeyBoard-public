@@ -1431,7 +1431,45 @@ impl Engine {
     /// Các gợi ý cho `keys` có âm tiết đầu khớp mọi lựa chọn `picked` của [`Self::narrow`], mỗi chữ một lần.
     pub fn candidates_narrowed(&self, keys: &str, picked: &[(Part, String)]) -> Vec<Candidate> {
         let mut shown = HashSet::new();
-        self.narrowed(keys, picked).into_iter().map(|(c, _)| c).filter(|c| shown.insert(c.text.clone())).collect()
+        let base: Vec<Candidate> =
+            self.narrowed(keys, picked).into_iter().map(|(c, _)| c).filter(|c| shown.insert(c.text.clone())).collect();
+        match picked.last() {
+            Some((Part::Syllable, syllable)) => self.with_containing(keys, base, syllable),
+            _ => base,
+        }
+    }
+
+    /// Đã chọn cả âm ở cột trái (`trung`): thêm mọi từ (từ 2 âm) trong từ điển có đúng âm đó ở bất kỳ vị trí nào
+    /// (忠厚 trung hậu, 集中 tập trung, 人中 nhân trung), mỗi từ thay đúng phần phím của âm đó như chữ đơn (các phím sau
+    /// gõ tiếp); chữ đơn và từ xếp chung theo độ phổ biến (người dùng muốn 2026-11-19).
+    fn with_containing(&self, keys: &str, base: Vec<Candidate>, syllable: &str) -> Vec<Candidate> {
+        let consumed = base.first().map(|c| c.consumed).unwrap_or_else(|| keys.chars().take_while(|&c| c != '\'').count());
+        let mut seen: HashSet<String> = base.iter().map(|c| c.text.clone()).collect();
+        let first = base.len();
+        let mut rows: Vec<(u32, usize, Candidate)> = base
+            .into_iter()
+            .enumerate()
+            .map(|(i, c)| (self.dict.freq_of(&c.text, &c.reading).unwrap_or(0), i, c))
+            .collect();
+        for (i, e) in self.dict.entries().iter().enumerate() {
+            if !e.reading.contains(' ') || dict::is_shortcut(&e.reading) || !e.reading.split(' ').any(|s| s == syllable) {
+                continue;
+            }
+            if !seen.insert(e.text.clone()) {
+                continue;
+            }
+            let c = Candidate {
+                text: e.text.clone(),
+                reading: e.reading.clone(),
+                consumed,
+                abbreviated: false,
+                joined: false,
+                breaks: Vec::new(),
+            };
+            rows.push((self.dict.freq(i), first + i, c));
+        }
+        rows.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        rows.into_iter().map(|(_, _, c)| c).collect()
     }
 
     /// Các cụm (có trong từ điển) cho `keys` mà âm thứ `i` khớp `locks[i]` (các âm đã chốt tương đối ở cột trái, theo
@@ -3356,6 +3394,34 @@ mod tests {
         let cands = e.candidates_narrowed("m", &picked[..1]);
         let grid = texts(&cands);
         assert_eq!(grid.iter().filter(|t| **t == "牟").count(), 1, "{grid:?}");
+    }
+
+    #[test]
+    fn picked_syllable_lists_words_containing_it() {
+        let e = Engine::new(
+            Dictionary::from_text("中;trung;9
+忠;trung;6
+蟲;trùng;8
+中國;trung quốc;7
+集中;tập trung;10
+人中;nhân trung;1
+重要;trọng yếu;5
+").0,
+        );
+        let trung = [(Part::Syllable, "trung".to_string())];
+        // Chọn trung: chữ đơn trung và mọi từ có âm trung ở bất kỳ chỗ nào, chung một thứ tự theo độ phổ biến; không có
+        // chữ khác thanh (蟲 trùng).
+        let got = e.candidates_narrowed("trung", &trung);
+        assert_eq!(texts(&got), ["集中", "中", "中國", "忠", "人中"]);
+        // Mỗi từ thay đúng phần phím của âm trung, phím sau gõ tiếp.
+        assert!(got.iter().all(|c| c.consumed == 5));
+        let got = e.candidates_narrowed("trung'quoc", &trung);
+        assert!(got.iter().all(|c| c.consumed == got[0].consumed));
+        // Chưa chọn âm: có cả chữ khác thanh (trùng), không thêm các từ chứa âm.
+        let none = e.candidates_narrowed("trung", &[]);
+        let all = texts(&none);
+        assert!(all.contains(&"蟲") && all.contains(&"中"), "{all:?}");
+        assert!(!all.contains(&"集中"), "{all:?}");
     }
 
     #[test]

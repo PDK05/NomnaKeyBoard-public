@@ -3,7 +3,6 @@ package com.hannom.ime
 import android.content.Context
 import android.content.Intent
 import android.inputmethodservice.InputMethodService
-import android.media.AudioManager
 import android.text.InputType
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
@@ -323,8 +322,14 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         }
     }
 
-    /** Chữ gợi ý của ô nhập toàn màn hình theo ngôn ngữ bàn phím đang dùng (thay cho chữ gợi ý của ứng dụng). */
-    private fun extractHint(): CharSequence = hanNomText(effectiveMode.say("Gõ ở đây", "𢱗於低", "Typing here"))
+    /**
+     * Chữ gợi ý của ô nhập toàn màn hình: đúng chữ gợi ý của ô đang gõ trong ứng dụng (vd. "Gõ thử ở đây"), như người
+     * dùng muốn 2026-11-18; ô không có chữ gợi ý thì "Gõ ở đây" theo ngôn ngữ bàn phím đang dùng.
+     */
+    private fun extractHint(): CharSequence {
+        val app = currentInputEditorInfo?.hintText?.takeIf { it.isNotBlank() }
+        return hanNomText(app ?: effectiveMode.say("Gõ ở đây", "𢱗於低", "Typing here"))
+    }
 
     /**
      * Ô nhập toàn màn hình (xoay ngang) tự dựng như Gboard, không dùng kiểu của hãng máy (Realme: ô bo tròn, nút
@@ -476,6 +481,8 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         outInsets.touchableRegion.set(0, if (r.resizeShown) loc[1] else top, r.width, loc[1] + r.height)
         // Khung gõ nằm trên dải trong suốt: nhận chạm riêng ô khung gõ (dời con trỏ), phần còn lại vẫn của ứng dụng.
         r.composeBox()?.let { outInsets.touchableRegion.op(it, android.graphics.Region.Op.UNION) }
+        // Bảng giữ emoji tràn lên trên bàn phím (như Gboard): phần đó cũng nhận chạm.
+        r.tonesBox()?.let { outInsets.touchableRegion.op(it, android.graphics.Region.Op.UNION) }
     }
 
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
@@ -504,6 +511,10 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         recognizer?.cancel()
         root?.let { r ->
             r.applyTheme(KeyboardTheme.of(this))
+            // Lựa chọn ưu tiên: hàng số (ô mật khẩu có thể vẫn hiện), phông và cỡ chữ trên phím.
+            r.keyboard.numberRow = settings.numberRow || (secure && settings.numberRowPassword)
+            r.keyboard.labelScale = settings.labelScale(this)
+            r.keyboard.refreshFont()
             val config = resources.configuration
             val landscape = config.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
             // Ngang: mặc định hàng chữ theo tỉ lệ chiều cao màn hình (đo trên Gboard), không cao hơn khi dọc.
@@ -737,9 +748,9 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
             val follow = engine.after(before, k)
             follow + own.filterNot { c -> follow.any { it.text == c.text && it.consumed == c.consumed } }
         }
-        // Cụm dài nhất (nhiều chữ Hán nhất) đứng đầu, như Gboard: lên thanh cả khi bảng chưa mở, ấn cách chọn nó (người
-        // dùng muốn 2026-11-17). Đang chọn tiếp sau chữ đã chọn dở thì các cụm nối tiếp chữ đó vẫn đứng trước.
-        val ordered = if (before.isEmpty() && k.isNotEmpty()) longestFirst(list, engine.syllableChunks(k).size) else list
+        // Xếp theo độ phổ biến, không ưu tiên cụm dài; chỉ câu tự ghép giữ ô 1 (người dùng muốn 2026-11-19; trước đó cụm
+        // dài nhất lên đầu). Đang chọn tiếp sau chữ đã chọn dở thì các cụm nối tiếp chữ đó vẫn đứng trước.
+        val ordered = if (before.isEmpty() && k.isNotEmpty()) byFrequency(list) else list
         // Chữ Latin thêm sau khi xếp, để luôn ở vị trí thứ 2 ([withQuocNgu]).
         val out = if (telex) withQuocNgu(ordered, k) else ordered
         synchronized(lookupCache) { lookupCache[key] = out }
@@ -747,15 +758,14 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
     }
 
     /**
-     * [list] với cụm nhiều chữ Hán nhất đưa lên đầu (bằng nhau thì cụm xếp hạng cao hơn), còn lại giữ thứ tự. Chỉ xét
-     * cụm không dài hơn số âm đã gõ ([syllables]): cụm đoán trước dài hơn (gõ `t` ra cụm 7 chữ) không tính, kẻo đẩy mất
-     * chữ Latin và các chữ của đúng âm đã gõ (người dùng báo 2026-11-17).
+     * [list] xếp theo độ phổ biến (cao trước, bằng nhau giữ thứ tự của lõi), kể cả cụm phủ hết phần đã gõ (中 dùng nhiều
+     * hơn thì đứng trước 中國); chỉ câu tự ghép (lõi đặt ở đầu khi không cụm nào phủ hết) giữ ô 1. Người dùng muốn
+     * 2026-11-19.
      */
-    private fun longestFirst(list: List<Candidate>, syllables: Int): List<Candidate> {
-        fun han(c: Candidate) = c.text.codePoints().filter { it >= 0x2E80 }.count()
-        val i = list.indices.filter { han(list[it]) <= syllables }.maxByOrNull { han(list[it]) } ?: return list
-        if (i == 0 || han(list[i]) <= han(list[0])) return list
-        return listOf(list[i]) + list.filterIndexed { j, _ -> j != i }
+    private fun byFrequency(list: List<Candidate>): List<Candidate> = when {
+        list.size < 2 -> list
+        list[0].joined -> listOf(list[0]) + list.drop(1).sortedByDescending { it.freq }
+        else -> list.sortedByDescending { it.freq }
     }
 
     private fun lookupKey(k: String, before: String, telex: Boolean) = "${if (telex) 'T' else 'H'}$before\u0000$k"
@@ -2331,8 +2341,9 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
                 keys.insert(0, last.keys)
                 tail = if (chosen.isEmpty()) 0 else keys.length
             } else {
-                // Xoá ký tự thường: ẩn khung kính.
+                // Xoá ký tự thường: ẩn khung kính; gần tới ký tự đầu thì nó hiện lại, đếm ngược (2026-11-19).
                 root?.hideLoupe()
+                root?.markPlainDeleting()
                 if (!editInWord { d, i -> if (i == 0) null else d.removeRange(i - 1, i) to i - 1 }) {
                     val start = keys.lastIndexOf('\'', at - 1) + 1
                     if (telex && start > 0 && engine.displayTelex(keys.substring(start, at), settings.toneStyle).isEmpty()) {
@@ -2366,6 +2377,7 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         }
         if (keys.isNotEmpty()) {
             root?.hideLoupe()
+            root?.markPlainDeleting()
             val next = when {
                 effectiveMode == Mode.QUOC_NGU -> engine.backspace(keys.toString(), settings.toneStyle)
                 telex -> engine.backspaceTelex(keys.toString(), settings.toneStyle)
@@ -2578,8 +2590,8 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
     }
 
     override fun onKeyFeedback(view: View) {
-        if (settings.vibrate) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-        if (settings.sound) (getSystemService(Context.AUDIO_SERVICE) as AudioManager).playSoundEffect(AudioManager.FX_KEY_CLICK)
+        if (settings.vibrate) keyVibrate(this, view, settings.vibrationMs)
+        if (settings.sound) keyClick(this, settings.volume)
     }
 
     // ---- Tiện ích ----

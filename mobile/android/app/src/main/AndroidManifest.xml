@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- "Cường độ rung khi nhấn phím" (Lựa chọn ưu tiên): rung theo số mili giây như Gboard. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <!-- Bảng "Đổi bàn phím" liệt kê cả các bộ gõ khác đã bật (Android 11+ cần khai báo mới thấy). -->
     <queries>
         <intent>

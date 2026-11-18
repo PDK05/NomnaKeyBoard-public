@@ -65,10 +65,55 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
     }
     private val abc = label("ABC") { listener.onEmojiClose() }
     private val emojiTab = icon(R.drawable.ic_emoji, "Emoji") { showEmoji() }
-    private val emoticonTab = label(":-)") { showEmoticons() }
+    /** Nút trang biểu tượng chữ: chữ đậm (người dùng muốn 2026-11-18). */
+    private val emoticonTab = label(":-)") { showEmoticons() }.apply { setTypeface(typeface, android.graphics.Typeface.BOLD) }
     private val delete = icon(R.drawable.ic_backspace, "Xoá") {}.apply { setOnTouchListener(DeleteRepeat()) }
 
     private var emoticons = false
+
+    /** Bảng giữ emoji mở / đóng / đổi: lớp phủ vẽ lại ([drawTones]). */
+    var onTonesChanged: (() -> Unit)?
+        get() = grid.onTonesChanged
+        set(v) { grid.onTonesChanged = v }
+    /** Đang mở bảng giữ emoji (bảng màu da / giới tính). */
+    val tonesOpen get() = isShown && grid.tonesOpen
+
+    /** Vị trí lưới so với [target] (lưới nằm trong khung cuộn). */
+    private fun gridOffset(target: View): android.graphics.PointF {
+        val g = IntArray(2).also { grid.getLocationInWindow(it) }
+        val t = IntArray(2).also { target.getLocationInWindow(it) }
+        return android.graphics.PointF((g[0] - t[0]).toFloat(), (g[1] - t[1]).toFloat())
+    }
+
+    /** Vẽ bảng giữ emoji lên lớp phủ [target] (toạ độ của [target]). */
+    fun drawTones(canvas: android.graphics.Canvas, target: View) {
+        if (!tonesOpen) return
+        val o = gridOffset(target)
+        canvas.save()
+        canvas.translate(o.x, o.y)
+        grid.drawTones(canvas)
+        canvas.restore()
+    }
+
+    /** Khung bảng giữ emoji trong cửa sổ (để cửa sổ bàn phím nhận chạm cả phần tràn lên trên), `null` nếu đóng. */
+    fun tonesBoxInWindow(): android.graphics.Rect? {
+        if (!tonesOpen) return null
+        val g = IntArray(2).also { grid.getLocationInWindow(it) }
+        val r = grid.tonesRect
+        return android.graphics.Rect((g[0] + r.left).toInt(), (g[1] + r.top).toInt(), (g[0] + r.right).toInt(), (g[1] + r.bottom).toInt())
+    }
+
+    /**
+     * Chạm khi bảng giữ emoji đang mở ([event] theo toạ độ của [target]): chuyển cho lưới, chạm trong bảng là chọn,
+     * ngoài bảng là đóng (cả khi chạm lên hàng tìm / nhóm hay phần bảng tràn lên trên bàn phím).
+     */
+    fun tonesTouch(event: android.view.MotionEvent, target: View) {
+        val o = gridOffset(target)
+        val e = android.view.MotionEvent.obtain(event)
+        e.offsetLocation(-o.x, -o.y)
+        grid.onTouchEvent(e)
+        e.recycle()
+    }
 
     private val landscape get() = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     private val searchIcon = ImageView(context).apply {
@@ -485,6 +530,7 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
         setPanelHeight(baseHeight)
         grid.landscape = landscape
         grid.emoticons = false
+        grid.emojiScale = if (landscape) 1f else Settings.EMOJI_SCALE[settings.emojiSize]
         grid.setGroups(emojiGroups(), columns = if (landscape) 8 else portraitColumns())
         if (wasEmoticons) {
             scroll.scrollTo(0, 0)
@@ -503,9 +549,14 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
 
     /**
      * Số cột màn hình dọc theo bề rộng, như Gboard (đo: máy 354 dp ra 8 cột, AVD 411 dp ra 9 cột, tức mỗi cột chừng
-     * 41–44 dp): mỗi cột ít nhất [MIN_CELL] dp.
+     * 41–44 dp): mỗi cột ít nhất [MIN_CELL] dp. "Kích thước biểu tượng cảm xúc" (Lựa chọn ưu tiên) cộng / trừ số cột
+     * so với nấc mặc định như Gboard ([Settings.EMOJI_COLUMNS]: 9 → 5 cột trên máy 354 dp).
      */
-    private fun portraitColumns() = (resources.configuration.screenWidthDp / MIN_CELL).coerceAtLeast(6)
+    private fun portraitColumns(): Int {
+        val base = (resources.configuration.screenWidthDp / MIN_CELL).coerceAtLeast(6)
+        val cols = Settings.EMOJI_COLUMNS
+        return (base + cols[settings.emojiSize] - cols[Settings.DEFAULT_EMOJI_SIZE]).coerceAtLeast(3)
+    }
 
     /**
      * Trang biểu tượng chữ `:-)`, như Gboard: cao hơn trang emoji [EMOTICON_EXTRA] dp (màn hình dọc), mở nhóm gần
@@ -730,10 +781,27 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
             }
         private var groups: List<Group> = emptyList()
         private var columns = 8
+        /** Hệ số cỡ emoji màn hình dọc theo nấc "Kích thước biểu tượng cảm xúc" ([Settings.EMOJI_SCALE]). */
+        var emojiScale = 1f
         /** Màn hình ngang: hàng thấp và emoji cỡ cố định, đo trên Gboard (8 cột). */
         var landscape = false
-        /** Phần dưới khung cuộn đang bị hàng dưới che (bảng giữ ô không mở xuống đó). */
+        /** Phần dưới khung cuộn đang bị hàng dưới che. */
         var bottomInset = 0
+        /**
+         * Bảng giữ ô mở / đóng / đổi bản đang tô. Bảng không vẽ trong lưới mà trên lớp phủ của cả bàn phím
+         * ([EmojiPanel.drawTones]): như Gboard, bảng luôn mở lên trên ô, giữ nguyên cỡ, đè lên hàng tìm / nhóm và tràn
+         * cả lên trên bàn phím (đo trên điện thoại 2026-11-18).
+         */
+        var onTonesChanged: (() -> Unit)? = null
+        /** Đang mở bảng giữ ô. */
+        val tonesOpen get() = popupItem != null
+        /** Khung bảng giữ ô (toạ độ lưới). */
+        val tonesRect: android.graphics.RectF get() = popupRect
+
+        private fun tonesChanged() {
+            invalidate()
+            onTonesChanged?.invoke()
+        }
         /** Trang `:-)`: không hàng tiêu đề, hàng cao [EMOTICON_ROW] dp, chữ [EMOTICON_SIZE] sp thu nhỏ cho vừa ô. */
         var emoticons = false
         /** Các hàng đã dàn: tiêu đề (`items` rỗng) hoặc một hàng ô, kèm toạ độ trên. */
@@ -875,7 +943,7 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
                 paint.textSize = when {
                     landscape -> context.dp(LANDSCAPE_SIZE)
                     // Gboard dọc: emoji vẽ rộng ~128 px trong ô 155 px (đo 2026-11-18).
-                    else -> cellW * PORTRAIT_SIZE
+                    else -> cellW * PORTRAIT_SIZE * emojiScale
                 }
                 val cy = row.top + row.height / 2f - (paint.ascent() + paint.descent()) / 2
                 val recent = isRecent(row)
@@ -897,10 +965,10 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
                     }
                 }
             }
-            drawTones(canvas)
         }
 
-        private fun drawTones(canvas: Canvas) {
+        /** Vẽ bảng giữ ô (toạ độ lưới) lên [canvas] của lớp phủ. */
+        fun drawTones(canvas: Canvas) {
             if (popupItem == null) return
             paint.color = theme.popup
             paint.setShadowLayer(context.dp(3f), 0f, context.dp(1f), 0x40000000)
@@ -932,8 +1000,9 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
         }
 
         /**
-         * Giữ ô có bản khác: mở bảng ngay trên ô, không đủ chỗ thì dưới ô, chọn sẵn bản đang hiện. Bảng không bao giờ
-         * che ô đang giữ: cả hai phía đều không đủ thì các hàng thấp lại cho vừa phía rộng hơn.
+         * Giữ ô có bản khác: mở bảng ngay trên ô, chọn sẵn bản đang hiện. Như Gboard, bảng luôn ở trên ô và giữ nguyên
+         * cỡ (trước đây không đủ chỗ thì mở xuống dưới hay ép các hàng thấp lại): bảng nằm trên lớp phủ nên đè được
+         * lên hàng tìm / nhóm và phần trên bàn phím.
          */
         private fun openTones() {
             val (item, row) = cellAt(downX, downY) ?: return
@@ -951,26 +1020,20 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
             val w = pair?.width(popupCell) ?: (popupCell * tones.maxOf { it.size })
             val cellX = (downX / (width / columns.toFloat())).toInt() * (width / columns.toFloat())
             val left = (cellX + width / columns.toFloat() / 2 - w / 2).coerceIn(0f, maxOf(0f, width - w))
-            val view = parent as? View
-            val visibleTop = view?.scrollY ?: 0
-            val visibleBottom = visibleTop + (view?.height ?: height) - bottomInset
             val gap = context.dp(4f)
-            val above = row.top - gap - visibleTop
-            val below = visibleBottom - row.top - row.height - gap
-            popupCellH = minOf(popupCellH, maxOf(above, below) / lines)
             val h = popupCellH * lines
-            val top = if (h <= above) row.top - h - gap else row.top + row.height + gap
+            val top = row.top - h - gap
             popupRect.set(left, top, left + w, top + h)
             swallow = true
             performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-            invalidate()
+            tonesChanged()
         }
 
         fun closeTones() {
             if (popupItem == null) return
             popupItem = null
             pair = null
-            invalidate()
+            tonesChanged()
         }
 
         /** Tô bản dưới ngón tay ([x], [y]) trong bảng giữ ô. */
@@ -981,7 +1044,7 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
             if (r != popupRow || c != popupCol) {
                 popupRow = r
                 popupCol = c
-                invalidate()
+                tonesChanged()
             }
         }
 
@@ -1023,7 +1086,7 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
                                         closeTones()
                                         onPickTone(chosen, popupRecent)
                                     } else {
-                                        invalidate()
+                                        tonesChanged()
                                     }
                                 }
                             } else if (popupRect.contains(e.x, e.y)) {

@@ -4,6 +4,7 @@ import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
@@ -99,6 +100,35 @@ class KeyboardView(context: Context, private val listener: Listener, private val
     private var shiftTapped = false
     /** Shift đổi (gợi ý từ viết hoa theo Shift / Caps Lock). */
     var onShiftChange: (Shift) -> Unit = {}
+
+    /**
+     * Trang chữ có hàng số (Lựa chọn ưu tiên → "Hàng số", hay "Hàng số cho mật khẩu" ở ô mật khẩu). Tắt thì cả bàn
+     * phím thấp đi một hàng số, trang ?123 cao bằng trang chữ (như Gboard).
+     */
+    var numberRow = true
+        set(v) {
+            if (field == v) return
+            field = v
+            setPage(page)
+        }
+    /** Cỡ chữ trên phím so với cỡ chuẩn (Lựa chọn ưu tiên → "Cỡ chữ"), 1 là 100%. */
+    var labelScale = 1f
+        set(v) {
+            if (field == v) return
+            field = v
+            invalidate()
+        }
+    /** Phông chữ Latin trên phím (Roboto đóng gói, hay phông hệ thống: "Phông chữ"). */
+    private var roboto = context.robotoTypeface()
+
+    /** Đọc lại phông chữ (đổi trong Lựa chọn ưu tiên). */
+    fun refreshFont() {
+        val t = context.robotoTypeface()
+        if (t == roboto) return
+        roboto = t
+        labelPaint.typeface = t
+        invalidate()
+    }
     /** Bàn phím viết tay: trang chữ chỉ còn hàng dưới cùng, phía trên để cho vùng viết. */
     var handwriting = false
         set(v) {
@@ -160,7 +190,6 @@ class KeyboardView(context: Context, private val listener: Listener, private val
     private var rows = Layouts.letters()
 
     private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val roboto = context.robotoTypeface()
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
         typeface = roboto
@@ -177,11 +206,11 @@ class KeyboardView(context: Context, private val listener: Listener, private val
     /** Trang 5 hàng: hàng số trên cùng thấp hơn hàng chữ (như Gboard, cả hai chiều màn hình). */
     private val shortNumberRow get() = rows.size == Layouts.MAX_ROWS
     /** Hàng số so với hàng chữ, và hàng phím cách so với hàng chữ (đo trên Gboard). */
-    private val numberRow get() = if (landscape) InputRoot.LANDSCAPE_NUMBER_ROW else InputRoot.PORTRAIT_NUMBER_ROW
+    private val numberRowRatio get() = if (landscape) InputRoot.LANDSCAPE_NUMBER_ROW else InputRoot.PORTRAIT_NUMBER_ROW
     /** Chiều cao hàng phím cách (cả khe). */
     private val bottomRow get() = rowHeight * if (landscape) InputRoot.LANDSCAPE_BOTTOM_ROW else InputRoot.PORTRAIT_BOTTOM_ROW
     /** Chiều cao phần phía trên hàng phím cách ở trang 5 hàng. */
-    private val rowsAbove get() = rowHeight * (numberRow + 3)
+    private val rowsAbove get() = rowHeight * (if (numberRow) numberRowRatio + 3 else 3f)
     /** Chiều cao các hàng trên hàng phím cách ở trang đang hiện; trang ít hàng thì phím cao hơn. */
     private var pageRowHeight = rowHeight
 
@@ -280,7 +309,7 @@ class KeyboardView(context: Context, private val listener: Listener, private val
         if (p == Page.SYMBOLS || p == Page.NUMPAD) symbolsPage = p
         page = p
         rows = when (p) {
-            Page.LETTERS -> if (handwriting) Layouts.handwriting() else Layouts.letters(style)
+            Page.LETTERS -> if (handwriting) Layouts.handwriting() else Layouts.letters(style, numberRow)
             Page.SYMBOLS -> Layouts.symbols(style)
             Page.SYMBOLS2 -> Layouts.symbols2(style)
             Page.NUMPAD -> Layouts.numpad(style)
@@ -418,7 +447,7 @@ class KeyboardView(context: Context, private val listener: Listener, private val
             val pitch = when {
                 r == rows.lastIndex -> bottomRow
                 !shortNumberRow -> pageRowHeight
-                r == 0 -> rowHeight * numberRow
+                r == 0 -> rowHeight * numberRowRatio
                 else -> rowHeight
             }
             val h = if (r == rows.lastIndex || shortNumberRow) pitch - gap else keyHeight
@@ -472,7 +501,7 @@ class KeyboardView(context: Context, private val listener: Listener, private val
 
     override fun onDraw(canvas: Canvas) {
         canvas.drawColor(theme.background)
-        if (page == Page.NUMPAD) {
+        if (page == Page.NUMPAD && !theme.borderless) {
             keyPaint.color = theme.specialKey
             canvas.drawRoundRect(numpadRail, radius, radius, keyPaint)
         }
@@ -486,15 +515,21 @@ class KeyboardView(context: Context, private val listener: Listener, private val
             }
             // Phím đang có bóng tròn phía trên: mất nền, chữ mờ đi như Gboard.
             val lifted = k === pressed && k.type == KeyType.CHAR && !numberPage && !overlay.showingAlternates
+            // Không viền phím (Gboard): chỉ phím cách, `?123` / `ABC` dạng viên thuốc và Enter có nền.
+            val barKey = k.type == KeyType.SPACE ||
+                (k.isPill && (k.type == KeyType.TO_SYMBOLS || k.type == KeyType.TO_LETTERS))
             keyPaint.color = when {
                 lifted -> theme.background
-                k === pressed && !railDragging -> theme.pressedKey
+                k === pressed && !railDragging -> if (theme.borderless) theme.spaceBar else theme.pressedKey
                 k.type == KeyType.ENTER -> theme.accent
+                theme.borderless -> if (barKey) theme.spaceBar else Color.TRANSPARENT
                 k.isSpecial -> theme.specialKey
                 else -> theme.key
             }
-            val r = if (k.isPill) k.rect.height() / 2 else radius
-            if (!k.rail) {
+            val r = if (k.isPill || (theme.borderless && k.type == KeyType.SPACE)) k.rect.height() / 2 else radius
+            if (keyPaint.color == Color.TRANSPARENT || (lifted && theme.borderless)) {
+                // Không vẽ nền.
+            } else if (!k.rail) {
                 canvas.drawRoundRect(k.rect, r, r, keyPaint)
             } else if (k === pressed && !railDragging) {
                 // Phím trong cột phép tính không có nền riêng, chỉ sáng lên khi nhấn.
@@ -530,7 +565,7 @@ class KeyboardView(context: Context, private val listener: Listener, private val
             // Chữ Nôm ngoài BMP (phím 𢮿徠) không có trong Roboto.
             labelPaint.typeface = if (text.any { it.isHighSurrogate() }) context.hanNomTypeface() ?: roboto else roboto
             labelPaint.color = if (k.type == KeyType.SPACE || lifted) theme.hintText else fg
-            labelPaint.textSize = when {
+            labelPaint.textSize = labelScale * when {
                 // Số ở bàn phím số to hơn chữ trên phím thường, như Gboard.
                 // Cột phép tính ở màn hình ngang: ký hiệu nhỏ hơn phím khác (Gboard đo trên điện thoại 2026-11-17: + cao
                 // chừng 0,6 lần %).
@@ -538,7 +573,10 @@ class KeyboardView(context: Context, private val listener: Listener, private val
                 numberPage && k.type == KeyType.CHAR && !k.isSpecial -> textRow * 0.62f
                 page == Page.PHONEPAD && k.type == KeyType.CHAR -> textRow * 0.48f
                 k.type == KeyType.SPACE -> if (text.length == 1) textRow * 0.48f else textRow * 0.3f
-                k.type == KeyType.TO_SYMBOLS2 || k.type == KeyType.SHIFT || (k.type == KeyType.TO_SYMBOLS && !k.isPill) -> textRow * 0.42f
+                // `?123` ở trang =\< (phím vuông) cùng cỡ `?123` ở trang chữ, không to như `=\<` (người dùng báo
+                // 2026-11-18); `!?#` của bàn phím số giữ cỡ cũ.
+                k.type == KeyType.TO_SYMBOLS2 || k.type == KeyType.SHIFT ||
+                    (k.type == KeyType.TO_SYMBOLS && !k.isPill && text != "?123") -> textRow * 0.42f
                 k.type == KeyType.MODE || k.type == KeyType.TO_LETTERS || text.length > 2 -> textRow * 0.32f
                 // Hàng số ở màn hình ngang thấp hơn nên chữ nhỏ hơn hàng chữ một chút.
                 landscape && shortNumberRow && row === rows[0] -> textRow * 0.48f * InputRoot.LANDSCAPE_NUMBER_TEXT
@@ -559,7 +597,24 @@ class KeyboardView(context: Context, private val listener: Listener, private val
                 y += k.rect.height() * 0.03f
             }
             labelPaint.isFakeBoldText = k.type == KeyType.MODE
+            // Nhãn nhiều chữ số (`?123`): chữ số theo bề rộng thật như Gboard. Roboto mặc định chữ số đều bề rộng, số 1
+            // chiếm ô rộng nên `?123` rộng hơn Gboard ~10% dù cùng cỡ chữ (đo trên điện thoại 2026-11-18: 114 / 104 px).
+            labelPaint.fontFeatureSettings = if (text.length > 1 && k.isSpecial) "pnum" else null
             canvas.drawText(text, labelPaint.centerXFor(text, k.rect.centerX()), y, labelPaint)
+            labelPaint.fontFeatureSettings = null
+            k.hint?.let { hint ->
+                // Số nhỏ góc trên phải (tắt hàng số), đo trên Gboard (điện thoại 2026-11-18): chữ số cao ~0,46 lần cỡ
+                // chữ trên phím, nét số cách mép phải ~2,3 dp, đỉnh số cách mép trên ~3,7 dp.
+                val size = labelPaint.textSize
+                labelPaint.textSize = size * HINT_TEXT
+                labelPaint.color = theme.hintText
+                labelPaint.textAlign = Paint.Align.RIGHT
+                // Chiều cao chữ số Roboto ~0,711 cỡ chữ.
+                val capTop = labelPaint.textSize * 0.711f
+                canvas.drawText(hint, k.rect.right - context.dp(2.3f), k.rect.top + context.dp(3.7f) + capTop, labelPaint)
+                labelPaint.textAlign = Paint.Align.CENTER
+                labelPaint.textSize = size
+            }
             labelPaint.isFakeBoldText = false
             if (k.rail) canvas.restore()
         }
@@ -755,6 +810,8 @@ class KeyboardView(context: Context, private val listener: Listener, private val
         if (k.type != KeyType.CHAR) return null
         shiftedDigit(k)?.let { return Layouts.shiftedDigitPopup(it, style) }
         var p = when {
+            // Tắt hàng số: hàng q–p giữ ra số (bảng riêng, đo trên Gboard).
+            k.hint != null -> Layouts.noNumberRowPopup(k, style)
             quocNgu && k.label in Layouts.VOWELS -> Layouts.quocNguVowels.getValue(k.label)
             quocNgu && k.label == "d" -> Layouts.STROKE_D
             // Gboard tiếng Việt: các phụ âm khác không có bảng.
@@ -852,6 +909,8 @@ class KeyboardView(context: Context, private val listener: Listener, private val
         const val TEXT_ROW_DP = 50f
         /** Khe giữa ba hàng số của bàn phím số, màn hình dọc (dp). */
         const val NUMPAD_GAP_DP = 6f
+        /** Cỡ số nhỏ góc phím ([Key.hint]) so với chữ trên phím (Gboard: số cao 26 px, chữ cỡ ~80 px). */
+        const val HINT_TEXT = 0.46f
         /** Giữ phím xoá: khoảng chờ giữa hai lần xoá lúc đầu và nhanh nhất (ms), mỗi lần nhân thêm hệ số. */
         private const val REPEAT_SLOW = 70f
         private const val REPEAT_FAST = 20f

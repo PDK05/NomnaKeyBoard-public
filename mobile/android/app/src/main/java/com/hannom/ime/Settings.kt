@@ -1,7 +1,6 @@
 package com.hannom.ime
 
 import android.content.Context
-import java.io.File
 
 /** Ngôn ngữ bàn phím: nhãn phím chế độ, nhãn phím cách, tên trong cài đặt. */
 enum class Mode(val label: String, val spaceLabel: String, val title: String) {
@@ -14,6 +13,14 @@ enum class Mode(val label: String, val spaceLabel: String, val title: String) {
         QUOC_NGU -> vi
         HAN_NOM -> nom
         else -> en
+    }
+
+    /** Tên trong ứng dụng cài đặt, theo ngôn ngữ ứng dụng ([AppText]). */
+    fun titleIn(context: Context): String = when (this) {
+        // Bản Hán Nôm: tiếng Việt 㗂越, tiếng Anh 㗂英 (người dùng đặt 2026-11-18).
+        QUOC_NGU -> context.tr(title, "Vietnamese (Latin)", "㗂越 (Latin)")
+        HAN_NOM -> title
+        ENGLISH -> context.tr(title, title, "㗂英 (US)")
     }
 }
 
@@ -29,6 +36,10 @@ enum class Layout {
         TELEX -> "QWERTY (Telex)"
         HANDWRITING -> "Viết tay"
     }
+
+    /** [title] theo ngôn ngữ ứng dụng ([AppText]). */
+    fun titleIn(mode: Mode, context: Context): String =
+        if (this == HANDWRITING) context.tr("Viết tay", "Handwriting", "𢪏𢬣") else title(mode)
 
     /** Hán Nôm gõ bằng [TELEX] hoặc viết tay (mô hình chỉ nhận chữ Hán Nôm); ngôn ngữ khác dùng [QWERTY]. */
     fun available(mode: Mode) = (this == QWERTY) != (mode == Mode.HAN_NOM)
@@ -57,7 +68,6 @@ data class Keyboard(val mode: Mode, val layout: Layout) {
 /** Cài đặt người dùng; giá trị hỏng hoặc thiếu thì dùng mặc định. */
 class Settings(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
-    private val filesDir = context.filesDir
 
     /** Các bàn phím đã thêm, theo thứ tự phím chế độ chuyển qua; luôn có ít nhất một. */
     var keyboards: List<Keyboard>
@@ -125,6 +135,48 @@ class Settings(context: Context) {
         get() = prefs.getBoolean("sound", false)
         set(v) = prefs.edit().putBoolean("sound", v).apply()
 
+    /** Âm lượng tiếng gõ phím (%, 0–100); [DEFAULT] là mức của hệ thống. */
+    var volume: Int
+        get() = prefs.getInt("volume", DEFAULT).coerceIn(DEFAULT, 100)
+        set(v) = prefs.edit().putInt("volume", v).apply()
+
+    /** Cường độ rung khi nhấn phím: thời gian rung (ms, 1–100) như Gboard; [DEFAULT] là mặc định của hệ thống. */
+    var vibrationMs: Int
+        get() = prefs.getInt("vibration_ms", DEFAULT).coerceIn(DEFAULT, MAX_VIBRATION_MS)
+        set(v) = prefs.edit().putInt("vibration_ms", v).apply()
+
+    /** Trang chữ có hàng số (như Gboard, mặc định bật). */
+    var numberRow: Boolean
+        get() = prefs.getBoolean("number_row", true)
+        set(v) = prefs.edit().putBoolean("number_row", v).apply()
+
+    /** Tắt [numberRow] mà ô đang gõ là ô mật khẩu thì vẫn hiện hàng số. */
+    var numberRowPassword: Boolean
+        get() = prefs.getBoolean("number_row_password", false)
+        set(v) = prefs.edit().putBoolean("number_row_password", v).apply()
+
+    /**
+     * "Phông chữ" (như Gboard): phông mặc định của hệ thống thay cho phông đi kèm của bàn phím, cho cả chữ Latin
+     * (thay Roboto) và chữ Hán Nôm (thay MiSans L3).
+     */
+    var systemFont: Boolean
+        get() = prefs.getBoolean("system_font", false)
+        set(v) = prefs.edit().putBoolean("system_font", v).apply()
+
+    /** Cỡ chữ trên phím (%), một trong [FONT_SIZES]; [DEFAULT] là "Giống như thiết bị" (theo cỡ chữ hệ thống). */
+    var fontSize: Int
+        get() = prefs.getInt("font_size", DEFAULT).let { if (it in FONT_SIZES) it else DEFAULT }
+        set(v) = prefs.edit().putInt("font_size", v).apply()
+
+    /** Kích thước emoji: nấc 0–6 của [EMOJI_COLUMNS], mặc định [DEFAULT_EMOJI_SIZE]. */
+    var emojiSize: Int
+        get() = prefs.getInt("emoji_size", DEFAULT_EMOJI_SIZE).coerceIn(0, EMOJI_COLUMNS.lastIndex)
+        set(v) = prefs.edit().putInt("emoji_size", v).apply()
+
+    /** Hệ số cỡ chữ trên phím theo [fontSize]: "Giống như thiết bị" lấy cỡ chữ của hệ thống. */
+    fun labelScale(context: Context): Float =
+        if (fontSize == DEFAULT) context.resources.configuration.fontScale else fontSize / 100f
+
     /** Thanh công cụ và bảng tiện ích (nút ⊞): nút ghim, nút góc phải, thứ tự các ô còn lại; kéo thả để đổi. */
     var tools: ToolLayout
         get() {
@@ -165,6 +217,18 @@ class Settings(context: Context) {
         get() = prefs.getInt("one_hand_shift", 0).coerceAtLeast(0)
         set(v) = prefs.edit().putInt("one_hand_shift", v).apply()
 
+    /**
+     * Bàn phím một tay (màn hình dọc): chiều cao hàng phím (dp) và khoảng trống dưới đáy (dp) đã kéo trong "Kích thước",
+     * nhớ riêng với bàn phím đầy đủ (người dùng muốn 2026-11-18): bấm phóng to thì bàn phím đầy đủ trở lại đúng cỡ và
+     * chỗ cũ. Chưa chỉnh lần nào thì theo bàn phím đầy đủ.
+     */
+    var oneHandRowHeight: Int
+        get() = prefs.getInt("one_hand_row_height", rowHeight).coerceIn(MIN_ROW_HEIGHT, MAX_ROW_HEIGHT)
+        set(v) = prefs.edit().putInt("one_hand_row_height", v).apply()
+    var oneHandBottomGap: Int
+        get() = prefs.getInt("one_hand_bottom_gap", bottomGap).coerceIn(0, MAX_BOTTOM_GAP)
+        set(v) = prefs.edit().putInt("one_hand_bottom_gap", v).apply()
+
     /** Khoảng trống thêm dưới bàn phím (dp), cho máy bị thanh điều hướng che hàng phím dưới cùng. */
     var bottomGap: Int
         get() = prefs.getInt("bottom_gap", 0).coerceIn(0, MAX_BOTTOM_GAP)
@@ -193,8 +257,42 @@ class Settings(context: Context) {
         get() = prefs.getInt("landscape_bottom_gap", 0).coerceIn(0, MAX_BOTTOM_GAP)
         set(v) = prefs.edit().putInt("landscape_bottom_gap", v).apply()
 
-    /** Phông Hán Nôm người dùng chọn, chép vào thư mục ứng dụng. */
-    val fontFile: File get() = File(filesDir, "hannom_font.ttf")
+    /** Giao diện bàn phím đang dùng ([ThemeSpec.id]); mặc định tự động sáng / tối theo hệ thống. */
+    var themeId: String
+        get() = prefs.getString("theme", null) ?: ThemeSpec.SYSTEM
+        set(v) = prefs.edit().putString("theme", v).apply()
+
+    /** "Đường viền phím" của giao diện đang dùng. */
+    var keyBorders: Boolean
+        get() = prefs.getBoolean("key_borders", true)
+        set(v) = prefs.edit().putBoolean("key_borders", v).apply()
+
+    /**
+     * "Giao diện của tôi": chỉ các giao diện đã áp dụng từ mục "Màu" (mới nhất trước; người dùng quyết định
+     * 2026-11-18), mỗi mục `id:1` (có viền) hoặc `id:0`. Không có giao diện ảnh riêng.
+     */
+    var myThemes: List<Pair<String, Boolean>>
+        get() = prefs.getString("my_themes", null)?.split(',')?.mapNotNull {
+            val (id, b) = it.split(':').takeIf { p -> p.size == 2 } ?: return@mapNotNull null
+            (id to (b == "1")).takeIf { ThemeSpec.isColor(id) }
+        }.orEmpty()
+        set(v) = prefs.edit().putString("my_themes", v.joinToString(",") { "${it.first}:${if (it.second) 1 else 0}" }).apply()
+
+    /** Áp dụng giao diện; giao diện từ mục "Màu" thì đưa lên đầu "Giao diện của tôi". */
+    fun applyTheme(id: String, borders: Boolean) {
+        themeId = id
+        keyBorders = borders
+        if (ThemeSpec.isColor(id)) myThemes = listOf(id to borders) + myThemes.filter { it != id to borders }
+    }
+
+    /** Xoá một mục khỏi "Giao diện của tôi"; đang dùng chính nó thì trở về giao diện tự động theo hệ thống. */
+    fun removeMyTheme(id: String, borders: Boolean) {
+        myThemes = myThemes.filter { it != id to borders }
+        if (themeId == id && keyBorders == borders) {
+            themeId = ThemeSpec.SYSTEM
+            keyBorders = true
+        }
+    }
 
     companion object {
         /**
@@ -210,8 +308,59 @@ class Settings(context: Context) {
         const val MIN_ROW_HEIGHT = 36
         const val MIN_LANDSCAPE_ROW_HEIGHT = 24
         const val MAX_ROW_HEIGHT = 72
-        /** Bề rộng bàn phím một tay so với màn hình: mặc định (Gboard chừng 87%) và nhỏ nhất. */
+        /**
+         * Bề rộng bàn phím một tay so với màn hình: mặc định = lớn nhất (Gboard chừng 87%) và nhỏ nhất (Gboard 75%: khung
+         * 930 / 1240 px, đo 2026-11-18).
+         */
         const val DEFAULT_ONE_HAND_WIDTH = 0.87f
-        const val MIN_ONE_HAND_WIDTH = 0.55f
+        const val MIN_ONE_HAND_WIDTH = 0.75f
+
+        /** Giá trị "mặc định của hệ thống" cho [volume], [vibrationMs], [fontSize]. */
+        const val DEFAULT = -1
+        const val MAX_VIBRATION_MS = 100
+        /**
+         * Các nấc "Cỡ chữ" của Gboard (đo trên điện thoại 2026-11-18): 85%, giống như thiết bị, 115–200%.
+         */
+        val FONT_SIZES = intArrayOf(85, DEFAULT, 115, 130, 150, 180, 200)
+        /**
+         * Số emoji một hàng (màn hình dọc) theo nấc "Kích thước biểu tượng cảm xúc" của Gboard (đo trên điện thoại
+         * 2026-11-18, màn hình 354 dp; mặc định nấc 1 = 8 emoji).
+         */
+        val EMOJI_COLUMNS = intArrayOf(9, 8, 8, 7, 7, 6, 5)
+        /**
+         * Hệ số cỡ emoji (so với cỡ thường của số cột đó) theo nấc: nấc "8+" và "7+" giữ số cột nhưng emoji to hơn một
+         * chút. Đo trên Gboard (điện thoại 2026-11-18): 😂 rộng 121 → 128 px ở 8 / 8+ cột, 137 → 150 px ở 7 / 7+ cột.
+         */
+        val EMOJI_SCALE = floatArrayOf(1f, 1f, 128f / 121f, 1f, 150f / 137f, 1f, 1f)
+        const val DEFAULT_EMOJI_SIZE = 1
+
+        /** Đọc nhanh [systemFont] không cần dựng [Settings] (dùng khi vẽ chữ). */
+        fun systemFont(context: Context) =
+            context.getSharedPreferences("settings", Context.MODE_PRIVATE).getBoolean("system_font", false)
     }
+}
+
+/**
+ * Rung khi nhấn phím: [ms] là [Settings.DEFAULT] thì rung kiểu gõ phím của hệ thống, không thì rung đúng chừng đó mili
+ * giây ("Cường độ rung khi nhấn phím" của Gboard).
+ */
+fun keyVibrate(context: Context, view: android.view.View?, ms: Int) {
+    if (ms == Settings.DEFAULT || ms <= 0) {
+        view?.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+        return
+    }
+    val vibrator = if (android.os.Build.VERSION.SDK_INT >= 31) {
+        context.getSystemService(android.os.VibratorManager::class.java)?.defaultVibrator
+    } else {
+        @Suppress("DEPRECATION")
+        context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+    } ?: return
+    vibrator.vibrate(android.os.VibrationEffect.createOneShot(ms.toLong(), android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+}
+
+/** Tiếng gõ phím: [volume] (%) là [Settings.DEFAULT] thì theo âm lượng hệ thống. */
+fun keyClick(context: Context, volume: Int) {
+    val audio = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+    if (volume == Settings.DEFAULT) audio.playSoundEffect(android.media.AudioManager.FX_KEY_CLICK)
+    else audio.playSoundEffect(android.media.AudioManager.FX_KEY_CLICK, volume / 100f)
 }

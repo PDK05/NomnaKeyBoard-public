@@ -85,7 +85,7 @@ class CandidateBar(context: Context, private val onPick: (Candidate) -> Unit, pr
 
     fun applyTheme() {
         resetToolCells()
-        setBackgroundColor(theme.background)
+        setBackgroundColor(theme.header)
         expandButton.setColorFilter(theme.text)
         // Vạch ngăn mảnh giữa các ô gợi ý, cách viền trên dưới.
         val line = GradientDrawable().apply {
@@ -547,7 +547,7 @@ class CandidateBar(context: Context, private val onPick: (Candidate) -> Unit, pr
         EllipsisTextView(context).apply {
             this.text = if (small) text else context.hanNomText(text)
             gravity = Gravity.CENTER
-            setTextColor(if (highlight) theme.accent else theme.text)
+            setTextColor(if (highlight) theme.candidate else theme.text)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, if (small) 15f else sizeSp)
             minWidth = context.dpi(44)
             setPadding(context.dpi(12), 0, context.dpi(12), 0)
@@ -1475,7 +1475,7 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
             shownPicking = picking
             onPicking()
         }
-        setBackgroundColor(theme.background)
+        setBackgroundColor(theme.header)
         columnLine.background = GradientDrawable().apply {
             setColor(theme.hintText)
             alpha = 90
@@ -1524,12 +1524,13 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
             narrowing = true
             onNarrowing(items.mapTo(HashSet()) { it.text }, latin)
         } else {
-            // Mở bảng / đã chốt âm (người dùng muốn 2026-11-17, như Gboard): cụm dài nhất đứng đầu thanh; lưới xếp từ dài
+            // Mở bảng / đã chốt âm: thanh như khi gõ ([byFrequency]: ô 1 gợi ý phủ hết, còn lại theo độ phổ biến; 2026-11-19);
+            // lưới (người dùng muốn 2026-11-17, như Gboard) xếp từ dài
             // xuống ngắn, mỗi độ dài ít cụm ([panelOrder]), rồi chữ đơn của âm đầu. Lưới ít mục nên dựng nhanh.
             // Cụm lõi tự ghép (không có trong từ điển): thanh chỉ giữ cụm đầu tiên (câu tốt nhất), các biến thể khác một
             // chữ (共産党越南, 共産讜越南…) bỏ đi (người dùng muốn 2026-11-17).
             var firstJoined = true
-            val ordered = longestFirst(chosen ?: all).filter { c ->
+            val ordered = byFrequency(chosen ?: all).filter { c ->
                 !c.joined || firstJoined.also { firstJoined = false }
             }
             // Chữ Latin của âm đang trỏ tới giữ ô 2 của thanh dù cụm dài nhất được đôn lên đầu ([pointedLatin]).
@@ -1865,14 +1866,13 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
     }
 
     /**
-     * [list] với cụm dài nhất (nhiều chữ Hán nhất; bằng nhau thì cụm xếp hạng cao hơn) đưa lên đầu, còn lại giữ thứ tự.
-     * Chỉ xét cụm không dài hơn số âm đã gõ: cụm đoán trước dài hơn (gõ `t` ra cụm 7 chữ) không tính (2026-11-17).
+     * Thứ tự thanh gợi ý (người dùng muốn 2026-11-19; trước đó cụm dài nhất lên đầu): theo độ phổ biến, kể cả cụm phủ hết
+     * phần đã gõ; chỉ câu tự ghép (lõi đặt ở đầu) giữ ô 1. Chữ Latin vẫn ở ô 2 ([pointedLatin]).
      */
-    private fun longestFirst(list: List<Candidate>): List<Candidate> {
-        val syllables = syllableCount()
-        val i = list.indices.filter { hanLength(list[it].text) <= syllables }.maxByOrNull { hanLength(list[it].text) } ?: return list
-        if (i == 0 || hanLength(list[i].text) <= hanLength(list[0].text)) return list
-        return listOf(list[i]) + list.filterIndexed { j, _ -> j != i }
+    private fun byFrequency(list: List<Candidate>): List<Candidate> = when {
+        list.size < 2 -> list
+        list[0].joined -> listOf(list[0]) + list.drop(1).sortedByDescending { it.freq }
+        else -> list.sortedByDescending { it.freq }
     }
 
     /**
@@ -2111,7 +2111,7 @@ class InputRoot(
             // Cao nhất: theo chiều cao hàng phím, và đỉnh khung không lên quá phần [MAX_SHARE] màn hình.
             val want = editRow - dy / context.dp(1f) / pageRows
             val maxRow = (editRow + (maxGap(editRow) - editGap) / pageRows)
-                .coerceIn(editRow.coerceAtMost(Settings.MAX_ROW_HEIGHT.toFloat()), Settings.MAX_ROW_HEIGHT.toFloat())
+                .coerceIn(editRow.coerceAtMost(maxRowLimit), maxRowLimit)
             editRow = want.coerceIn(minRow, maxRow)
             showFrame()
             return editRow != want
@@ -2124,7 +2124,7 @@ class InputRoot(
             val want = -dy / context.dp(1f)
             val up = want
                 .coerceIn(-editGap, Settings.MAX_BOTTOM_GAP - editGap)
-                .coerceIn((editRow - Settings.MAX_ROW_HEIGHT) * rows, (editRow - minRow) * rows)
+                .coerceIn((editRow - maxRowLimit) * rows, (editRow - minRow) * rows)
             editGap += up
             editRow -= up / rows
             showFrame()
@@ -2187,6 +2187,10 @@ class InputRoot(
                 // Đúng cỡ mặc định thì lưu 0 (theo mặc định), để mặc định đổi sau này (đo lại Gboard) vẫn có tác dụng.
                 settings.landscapeRowHeight = if (row == landscapeDefaultRow) 0 else row
                 settings.landscapeBottomGap = gap
+            } else if (oneHandSize) {
+                // Một tay: cỡ và chỗ nhớ riêng, bàn phím đầy đủ giữ nguyên.
+                settings.oneHandRowHeight = row
+                settings.oneHandBottomGap = gap
             } else {
                 val level = Settings.ROW_HEIGHTS.indexOf(row)
                 // Trùng một mức có sẵn thì lưu là mức đó (cài đặt hiện Thấp / Vừa / Cao), không thì là tuỳ chỉnh.
@@ -2266,14 +2270,27 @@ class InputRoot(
     private fun maxGap(row: Float): Float {
         val dp = context.dp(1f)
         val panelH = panel.height + (row - resizeRow) * pageRows * dp
+        // Một tay (dọc): đỉnh khung không lên quá ONE_HAND_MAX_FRAME_DP tính từ đáy bàn phím, như Gboard.
+        if (oneHandPortrait) return (ONE_HAND_MAX_FRAME_DP - panelH / dp).coerceIn(0f, Settings.MAX_BOTTOM_GAP.toFloat())
         val system = paddingBottom - resizeGap * dp
         val share = if (landscape) LANDSCAPE_MAX_SHARE else MAX_SHARE
         return ((height * share - system - panelH) / dp).coerceIn(0f, Settings.MAX_BOTTOM_GAP.toFloat())
     }
 
     /** Chiều cao cả trang phím tính theo số hàng chữ. */
-    private val pageRows get() = if (landscape) LANDSCAPE_PAGE_ROWS else PORTRAIT_PAGE_ROWS
-    private val minRow get() = (if (landscape) Settings.MIN_LANDSCAPE_ROW_HEIGHT else Settings.MIN_ROW_HEIGHT).toFloat()
+    private val pageRows get() = (if (landscape) LANDSCAPE_PAGE_ROWS else PORTRAIT_PAGE_ROWS) -
+        if (keyboard.numberRow) 0f else if (landscape) LANDSCAPE_NUMBER_ROW else PORTRAIT_NUMBER_ROW
+    private val minRow get() = when {
+        oneHandPortrait -> rowForFrame(ONE_HAND_MIN_FRAME_DP)
+        landscape -> Settings.MIN_LANDSCAPE_ROW_HEIGHT.toFloat()
+        else -> Settings.MIN_ROW_HEIGHT.toFloat()
+    }
+    private val maxRowLimit get() =
+        if (oneHandPortrait) rowForFrame(ONE_HAND_MAX_FRAME_DP) else Settings.MAX_ROW_HEIGHT.toFloat()
+    private val oneHandPortrait get() = oneHandSize && !landscape
+
+    /** Chiều cao hàng phím (dp) để cả khung (thanh trên + trang phím) cao [frameDp] dp. */
+    private fun rowForFrame(frameDp: Float) = resizeRow + (frameDp - panel.height / context.dp(1f)) / pageRows
 
     /** Đang kéo: số đo mới (hàng phím, khoảng trống dưới đáy, bề rộng / khoảng cách một tay), thả tay mới áp. */
     private var dragging = false
@@ -2299,6 +2316,11 @@ class InputRoot(
         } else {
             val (l, r) = panelBounds(width)
             RectF(l.toFloat(), top, r.toFloat(), bottom)
+        }
+        // Màn hình ngang: khung nằm trong vùng phím, lùi khỏi tai thỏ như các phím (cạnh / góc kéo không nằm dưới camera).
+        if (landscape) {
+            frame.left = maxOf(frame.left, keyboard.insetLeft)
+            frame.right = minOf(frame.right, width - keyboard.insetRight)
         }
         resize.setFrame(frame, top, bottom, sides = keyboard.effectiveOneHand != OneHand.OFF)
     }
@@ -2595,11 +2617,31 @@ class InputRoot(
         column.addView(panelRow, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         addView(column, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         // Đổi bàn phím một tay (bật, đổi bên, viết tay, xoay màn hình): xếp lại khối bàn phím và cột nút.
-        keyboard.onOneHandChange = { relayoutPanel() }
+        keyboard.onOneHandChange = {
+            relayoutPanel()
+            // Bật / tắt một tay: lấy lại cỡ và khoảng trống đã nhớ của chế độ đó.
+            if (!resizeShown) {
+                applySavedRowHeight()
+                requestApplyInsets()
+            }
+        }
         addView(overlay, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(resize, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         resize.visibility = View.GONE
+        // Bảng giữ emoji vẽ trên lớp phủ (đè hàng tìm / nhóm, tràn lên trên bàn phím như Gboard); mở / đóng thì dàn
+        // lại để cửa sổ tính lại vùng nhận chạm ([HanNomIME.onComputeInsets]).
+        overlay.extra = { canvas -> emoji.drawTones(canvas, overlay) }
+        emoji.onTonesChanged = {
+            overlay.invalidate()
+            requestLayout()
+        }
     }
+
+    /** Đang chuyển các chạm của một cử chỉ cho bảng giữ emoji ([EmojiPanel.tonesTouch]). */
+    private var tonesGesture = false
+
+    /** Khung bảng giữ emoji trong cửa sổ, `null` nếu đóng. */
+    fun tonesBox(): android.graphics.Rect? = emoji.tonesBoxInWindow()
 
     fun applyTheme(theme: KeyboardTheme) {
         keyboard.theme = theme
@@ -2665,6 +2707,12 @@ class InputRoot(
     fun markDeleting() {
         composing.deleting = true
         composing.post { composing.deleting = false }
+    }
+
+    /** Ấn xoá mà xoá một ký tự thường (chữ đen): khung kính đếm ngược khi gần tới ký tự đầu ([ComposingView.show]). */
+    fun markPlainDeleting() {
+        composing.plainDeleting = true
+        composing.post { composing.plainDeleting = false }
     }
 
     fun setComposing(text: String, chosen: Int = 0, caret: Int = text.length, locked: Int = 0, target: Int = 0, steps: Int = 0) {
@@ -2893,6 +2941,14 @@ class InputRoot(
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         touchX = ev.x
         touchY = ev.y
+        // Bảng giữ emoji đang mở: cả cử chỉ về bảng (chạm trong bảng là chọn, ngoài bảng là đóng), kể cả phần bảng đè
+        // lên hàng tìm / nhóm hay tràn lên trên bàn phím.
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) tonesGesture = emoji.tonesOpen
+        if (tonesGesture) {
+            emoji.tonesTouch(ev, this)
+            if (ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL) tonesGesture = false
+            return true
+        }
         return super.dispatchTouchEvent(ev)
     }
 
@@ -3000,8 +3056,19 @@ class InputRoot(
     private var landscapeDefaultRow = 0
 
     /** Chiều cao hàng phím (dp) và khoảng trống dưới đáy (dp) đã lưu của hướng màn hình đang dùng. */
-    private fun savedRow(s: Settings) = if (landscape) s.landscapeRowHeight.takeIf { it > 0 } ?: landscapeDefaultRow else s.rowHeight
-    private fun savedGap(s: Settings) = if (landscape) s.landscapeBottomGap else s.bottomGap
+    private fun savedRow(s: Settings) = when {
+        landscape -> s.landscapeRowHeight.takeIf { it > 0 } ?: landscapeDefaultRow
+        oneHandSize -> s.oneHandRowHeight
+        else -> s.rowHeight
+    }
+    private fun savedGap(s: Settings) = when {
+        landscape -> s.landscapeBottomGap
+        oneHandSize -> s.oneHandBottomGap
+        else -> s.bottomGap
+    }
+
+    /** Đang dùng cỡ riêng của bàn phím một tay (màn hình dọc, không viết tay). */
+    private val oneHandSize get() = keyboard.effectiveOneHand != OneHand.OFF
 
     fun applySavedRowHeight() = setRowHeight(context.dp(savedRow(Settings(context)).toFloat()))
 
@@ -3017,6 +3084,12 @@ class InputRoot(
         const val COMPOSE_HEIGHT = 32
         /** Chỉnh kích thước: bàn phím cùng khoảng trống dưới đáy chiếm tối đa chừng này chiều cao màn hình. */
         const val MAX_SHARE = 0.6f
+        /**
+         * Bàn phím một tay, màn hình dọc: khung (thanh trên + phím) cao 224–358 dp, và đỉnh khung không lên quá 358 dp tính
+         * từ đáy bàn phím (đo khung chỉnh kích thước một tay của Gboard trên điện thoại 2026-11-18).
+         */
+        const val ONE_HAND_MIN_FRAME_DP = 224f
+        const val ONE_HAND_MAX_FRAME_DP = 358f
         /** Như [MAX_SHARE] cho màn hình ngang (đo trên Gboard: đỉnh khung lên tới chừng 22% màn hình tính từ trên). */
         const val LANDSCAPE_MAX_SHARE = 0.835f
         // Tỉ lệ màn hình ngang, đo trên Gboard (máy 792 × 354 dp). Các số hàng tính theo bước hàng chữ.
@@ -3170,8 +3243,10 @@ class ComposingView(context: Context) : TextView(context) {
         // khi xoá lùi (gỡ chữ, bỏ chốt) vượt qua lằn "…". Bộ gõ ẩn khung kính khi gõ phím hay xoá ký tự thường
         // ([hideLoupe]); hết chữ hay chỗ đó lại thấy được thì ẩn.
         fun hidden(at: Int) = a > 0 && at < a
-        // Còn "…" mà chỉ còn ≤ [LOUPE_AHEAD] lần xoá nữa là hết chữ chọn / âm chốt ([steps]).
-        fun ahead(now: Boolean) = now && a > 0 && steps in 1..LOUPE_AHEAD
+        // Mốc đếm ngược ở chỗ xoá: chữ dài không dấu cách thì 12, còn lại 5.
+        val limit = aheadLimit(full, aheadAt(end, lockEnd))
+        // Còn "…" mà chỉ còn ≤ mốc lần xoá nữa là hết chữ chọn / âm chốt ([steps]).
+        fun ahead(now: Boolean) = now && a > 0 && steps in 1..limit
         // Mỗi lần xoá, khung gõ có thể dựng lại vài lần (tra gợi ý, cột trái báo âm đã chốt): lần sau không đổi gì thì giữ
         // số đang hiện, kẻo mất số đỏ. Chọn tới thì hết số; gõ phím thì [hideLoupe] đã xoá khung.
         val count = when {
@@ -3184,6 +3259,12 @@ class ComposingView(context: Context) : TextView(context) {
         lastHadTarget = targetEnd > lockEnd
         when {
             text.isEmpty() -> hideLoupe()
+            // Xoá chữ đen gõ thường (chưa chọn chữ, chưa chốt âm): còn ≤ mốc lần xoá nữa ([c] ký tự trước con trỏ) là tới
+            // ký tự đầu tiên, mà phần đầu bị "…" che, thì khung kính ở chỗ xoá, đếm ngược (người dùng muốn 2026-11-19).
+            plainDeleting && end == 0 && lockEnd == 0 -> {
+                val at = (c - 1).coerceAtLeast(0)
+                if (a > 0 && c <= aheadLimit(full, at)) showLoupe(full, at, c, c) else hideLoupe()
+            }
             showChosen && end > 0 -> if (hidden(end - 1)) showLoupe(full, end - 1, c, count) else {
                 dismissLoupe()
                 loupeAt = -1
@@ -3196,6 +3277,8 @@ class ComposingView(context: Context) : TextView(context) {
             // 3. chưa chọn chữ nào mà đã chốt âm, cột trái không trỏ âm nào (đã chốt hết): bảng gợi ý đưa chữ Hán cho âm
             //    đầu tiên; nó bị che thì khung kính ở đó.
             targetEnd > lockEnd || selecting || steps > 0 -> when {
+                // Xoá lùi mà còn hơn mốc lần xoá: không hiện khung kính (không có số đỏ 20, 60…).
+                count > limit -> hideLoupe()
                 targetEnd > lockEnd && hidden(lockEnd) -> showLoupe(full, lockEnd, c, count)
                 end > 0 && hidden(end - 1) -> showLoupe(full, end - 1, c, count)
                 end == 0 && targetEnd == lockEnd && lockEnd > 0 && hidden(0) -> showLoupe(full, 0, c, count)
@@ -3233,6 +3316,15 @@ class ComposingView(context: Context) : TextView(context) {
      * kính hiện nó và âm vừa bỏ chốt sau nó).
      */
     private fun aheadAt(end: Int, lockEnd: Int) = if (end > 0) end - 1 else (lockEnd - 1).coerceAtLeast(0)
+
+    /** Mốc đếm ngược ở chỗ [at]: chữ dài không dấu cách (quá [LOUPE_RUN_CHARS] ký tự) thì [LOUPE_RUN_AHEAD], còn lại [LOUPE_AHEAD]. */
+    private fun aheadLimit(full: CharSequence, at: Int): Int {
+        val w = wordRanges(full).firstOrNull { at in it } ?: return LOUPE_AHEAD
+        return if (w.last + 1 - w.first > LOUPE_RUN_CHARS) LOUPE_RUN_AHEAD else LOUPE_AHEAD
+    }
+
+    /** Bộ gõ đang xoá một ký tự thường (chữ đen; [CandidateBar.markPlainDeleting]). */
+    var plainDeleting = false
 
     /** Đoạn [a, b) của [full], thêm "…" ở đầu / cuối nếu còn chữ bị ẩn bên đó. */
     private fun piece(full: CharSequence, a: Int, b: Int): CharSequence {
@@ -3352,8 +3444,17 @@ class ComposingView(context: Context) : TextView(context) {
         val wi = words.indexOfFirst { it.last >= at }.let { if (it < 0) words.lastIndex else it }
         val first = if (wi + 1 <= words.lastIndex) wi else (wi - 1).coerceAtLeast(0)
         val last = (first + 1).coerceAtMost(words.lastIndex)
-        val s = words[first].first
-        val e = words[last].last + 1
+        var s = words[first].first
+        var e = words[last].last + 1
+        // Chữ dài không có dấu cách để tách (tttt…, gõ loạn): hiện đúng [LOUPE_RUN_CHARS] ký tự quanh chỗ đổi, phần còn
+        // lại là "…", kẻo khung kính dài quá màn hình (người dùng muốn 2026-11-19).
+        val word = words[wi]
+        if (word.last + 1 - word.first > LOUPE_RUN_CHARS) {
+            s = (at - (LOUPE_RUN_CHARS - 1)).coerceIn(word.first, word.last + 1 - LOUPE_RUN_CHARS)
+            e = s + LOUPE_RUN_CHARS
+            if (s in 1 until n && Character.isLowSurrogate(full[s])) s--
+            if (e in 1 until n && Character.isLowSurrogate(full[e])) e++
+        }
         val head = if (s > 0) ELLIPSIS else ""
         val shown = android.text.SpannableStringBuilder().append(head).append(full, s, e).append(if (e < n) ELLIPSIS else "")
         // Dùng lại một khung (gõ phím nào cũng cập nhật, khỏi tạo cửa sổ mới cho đỡ chậm).
@@ -3501,8 +3602,16 @@ class ComposingView(context: Context) : TextView(context) {
         const val LOUPE_SCALE = 1.1f
         /** Số đỏ của khung kính cách mép phải (dp). */
         const val COUNT_EDGE_DP = 6f
-        /** Xoá lùi còn chừng này lần nữa là hết chữ chọn / âm chốt thì khung kính hiện sớm (người dùng muốn 2026-11-17). */
-        const val LOUPE_AHEAD = 5
+        /**
+         * Xoá lùi: khung kính chỉ hiện khi còn chừng này lần xoá nữa là tới chữ đầu tiên (chữ Hán đã chọn, âm đã chốt,
+         * chữ đen gõ thường), đếm 12 … 1; tới chữ đầu tiên thì không có số; xa hơn thì không hiện (người dùng 2026-11-19;
+         * trước 5).
+         */
+        const val LOUPE_AHEAD = 12
+        /** Như [LOUPE_AHEAD] cho chữ dài không có dấu cách để tách (tttt…, quá [LOUPE_RUN_CHARS] ký tự): đếm 12 … 1. */
+        const val LOUPE_RUN_AHEAD = 12
+        /** Chữ dài không có dấu cách để tách (tttt…): khung kính hiện đúng chừng này ký tự thay cho 2 chữ (2026-11-19). */
+        const val LOUPE_RUN_CHARS = 13
         const val ELLIPSIS = "…"
         /** Cuộn khung gõ về trước: số ký tự vẫn hiện trước con trỏ. */
         const val SCROLL_CONTEXT = 2

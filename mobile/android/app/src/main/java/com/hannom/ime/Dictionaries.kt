@@ -15,6 +15,15 @@ enum class Lang(val code: String, val title: String) {
     NOM("nom", "Hán Nôm"),
     EN("en", "English");
 
+    /** Tên ngôn ngữ theo ngôn ngữ ứng dụng ([AppText]). */
+    fun titleIn(context: Context): String = when (this) {
+        // Bản Hán Nôm: tiếng Việt 㗂越, tiếng Anh 㗂英 (người dùng đặt 2026-11-18).
+        VI -> context.tr(title, "Vietnamese", "㗂越")
+        // Người dùng đặt 2026-11-18: "Tiếng Việt (Hán Nôm)", không chỉ "Hán Nôm".
+        NOM -> context.tr("Tiếng Việt (Hán Nôm)", "Vietnamese (Han Nom)", "㗂越 (漢喃)")
+        EN -> context.tr(title, title, "㗂英")
+    }
+
     /** Tên từ điển theo chính ngôn ngữ đó (bảng của người dùng 2026-11-14). */
     val defaultName get() = when (this) {
         VI -> "Từ điển mặc định"
@@ -317,4 +326,33 @@ class WordStore(private val context: Context, private val info: DictInfo) : Dict
             return out
         }
     }
+}
+
+/**
+ * Thông báo lỗi từ điển (từ lõi hoặc [DictStore.put], viết bằng tiếng Việt) theo ngôn ngữ ứng dụng: tiếng Anh thì dịch
+ * theo mẫu, chữ khác giữ nguyên.
+ */
+fun Context.dictMessage(message: String): String {
+    if (AppText.lang(this) != AppLang.EN) return message
+    Regex("^Dòng (\\d+): (.*)$", RegexOption.DOT_MATCHES_ALL).find(message)?.let { m ->
+        return "Line ${m.groupValues[1]}: " + dictMessage(m.groupValues[2])
+    }
+    val rules = listOf(
+        Regex("^Đã có (.+) – (.+) trong từ điển$") to "$1 – $2 is already in the dictionary",
+        Regex("^Đã có (.+) trong từ điển$") to "$1 is already in the dictionary",
+        Regex("^Chưa nhập từ$") to "No word entered",
+        Regex("^Sửa một dòng thì chỉ nhập một âm đọc$") to "When editing an entry, enter only one reading",
+        Regex("^Lỗi không xác định$") to "Unknown error",
+        Regex("^[Tt]hiếu dấu ; \\(.*\\)$") to "Missing ; (each line is character;reading;frequency)",
+        Regex("^[Tt]hiếu độ phổ biến \\(.*\\)$") to "Missing frequency (each line is character;reading;frequency)",
+        Regex("^[Tt]hừa dấu ; \\(.*\\)$") to "Too many ; (each line is character;reading;frequency)",
+        Regex("^[Mm]ỗi dòng chỉ một âm đọc.*$") to "One reading per line; write a line for each reading",
+        Regex("^[Đđ]ộ phổ biến \"(.*)\" phải là số nguyên không âm$") to "Frequency \"$1\" must be a non-negative whole number",
+        Regex("^[Tt]hiếu chữ trước dấu ;$") to "Missing character before ;",
+        Regex("^[Tt]hiếu âm đọc sau dấu ;$") to "Missing reading after ;",
+        Regex("^[Cc]hữ dài (\\d+) ký tự, tối đa (\\d+)$") to "Text is $1 characters long, at most $2",
+        Regex("^\"(.+)\" không phải âm tiết tiếng Việt.*$") to "\"$1\" is not a Vietnamese syllable or a shortcut code (letters only)",
+    )
+    for ((re, en) in rules) if (re.matches(message)) return message.replace(re, en)
+    return message
 }

@@ -134,7 +134,7 @@ fun Activity.settingsPage(
     val colors = SettingsColors.of(this)
     val barHeight = dpi(64)
     val bigTitle = TextView(this).apply {
-        text = title
+        text = context.hanNomText(title)
         setTextColor(colors.text)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 34f)
         setPadding(dpi(24), dpi(40), dpi(24), dpi(24))
@@ -154,7 +154,7 @@ fun Activity.settingsPage(
     }
 
     val smallTitle = TextView(this).apply {
-        text = title
+        text = context.hanNomText(title)
         setTextColor(colors.text)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
         isSingleLine = true
@@ -164,7 +164,7 @@ fun Activity.settingsPage(
     val backButton = ImageView(this).apply {
         setImageResource(R.drawable.ic_arrow_back)
         setColorFilter(colors.text)
-        contentDescription = "Quay lại"
+        contentDescription = tr("Quay lại", "Back", "𫏓徠")
         scaleType = ImageView.ScaleType.CENTER
         background = iconRipple(colors)
         setOnClickListener { finish() }
@@ -269,7 +269,7 @@ private fun View.rippleBackground(colors: SettingsColors) {
 
 private fun ViewGroup.textBlock(colors: SettingsColors, title: String, summary: String?): Pair<LinearLayout, TextView> {
     val summaryView = TextView(context).apply {
-        text = summary.orEmpty()
+        text = context.hanNomText(summary.orEmpty())
         setTextColor(colors.summary)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
         visibility = if (summary.isNullOrEmpty()) View.GONE else View.VISIBLE
@@ -277,7 +277,7 @@ private fun ViewGroup.textBlock(colors: SettingsColors, title: String, summary: 
     val block = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         addView(TextView(context).apply {
-            text = title
+            text = context.hanNomText(title)
             setTextColor(colors.text)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 19f)
         })
@@ -317,7 +317,262 @@ fun LinearLayout.item(
     return summaryView
 }
 
-/** Dòng có công tắc bên phải (như "Lựa chọn ưu tiên" của Gboard); chạm cả dòng cũng bật / tắt. */
+/**
+ * Bật / tắt cả một dòng cài đặt (dòng tắt thì mờ đi, như mục phụ thuộc của Gboard). [row]: dòng của [item] (cha của
+ * khối chữ chứa ô dòng phụ) hay của [switchItem] (cha của công tắc), xem [rowOf].
+ */
+fun setRowEnabled(row: View, enabled: Boolean) {
+    fun apply(v: View) {
+        v.isEnabled = enabled
+        if (v is ViewGroup) for (i in 0 until v.childCount) apply(v.getChildAt(i))
+    }
+    apply(row)
+    row.alpha = if (enabled) 1f else 0.38f
+}
+
+/** Dòng chứa ô dòng phụ của [item] / công tắc của [switchItem]. */
+fun rowOf(summaryOrSwitch: View): View =
+    (if (summaryOrSwitch is Switch) summaryOrSwitch.parent else summaryOrSwitch.parent.parent) as View
+
+/**
+ * Thanh kéo kiểu Material 3 như Gboard (đo trên điện thoại 2026-11-18, màn hình 354 dp): rãnh dày 16 dp bo tròn, phần đã
+ * kéo màu nhấn, phần còn lại màu nhạt; nút kéo là vạch đứng 4 × 44 dp, cách hai phần rãnh 4 dp; ít nấc thì mỗi nấc một
+ * chấm 4 dp (trên phần đã kéo chấm màu nhạt, phần còn lại chấm màu nhấn). Nấc đầu / cuối cách hai đầu rãnh 8 dp.
+ */
+class SettingsSlider(
+    context: Context,
+    private val colors: SettingsColors,
+    max: Int,
+    value: Int,
+    /** Chữ trong bong bóng hiện trên nút kéo lúc đang kéo (Gboard: "9", "8", "8+"…, "100%"); `null` thì không có. */
+    private val labelOf: ((Int) -> String)? = null,
+    private val onChange: (Int) -> Unit,
+) : View(context) {
+    var max = max.coerceAtLeast(1)
+    /** Nấc đang chọn (0..[max]); đặt từ code thì không gọi [onChange]. */
+    var progress = value.coerceIn(0, this.max)
+        set(v) {
+            field = v.coerceIn(0, max)
+            invalidate()
+        }
+    private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    private val rect = android.graphics.RectF()
+    private val path = android.graphics.Path()
+    private val active = colors.primary
+    private val inactive = if (colors.light) Color.parseColor("#E2DFFF") else Color.parseColor("#3B4252")
+    /** Đang kéo: hiện bong bóng giá trị. */
+    private var dragging = false
+    private val labelPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = android.graphics.Paint.Align.CENTER
+        textSize = context.sp(14f)
+        color = Color.parseColor("#E0E2EF")
+    }
+    /** Có vẽ chấm nấc không (thanh liên tục 0–100 như âm lượng thì không). */
+    private val stops get() = max <= 20
+
+    private fun d(v: Float) = context.dp(v)
+    private val inset get() = d(8f)
+    private fun xOf(v: Float) = inset + (width - 2 * inset) * v / max
+
+    /** Khung bo tròn: đầu ngoài bo tròn hẳn, đầu sát nút kéo bo 2 dp. */
+    private fun track(c: android.graphics.Canvas, l: Float, r: Float, outerLeft: Boolean, color: Int) {
+        if (r - l <= 0f) return
+        val cy = height / 2f
+        val h = d(8f)
+        val big = h
+        val small = d(2f)
+        val (rl, rr) = if (outerLeft) big to small else small to big
+        rect.set(l, cy - h, r, cy + h)
+        path.reset()
+        path.addRoundRect(rect, floatArrayOf(rl, rl, rr, rr, rr, rr, rl, rl), android.graphics.Path.Direction.CW)
+        paint.color = color
+        c.drawPath(path, paint)
+    }
+
+    override fun onDraw(c: android.graphics.Canvas) {
+        val cy = height / 2f
+        val hx = xOf(progress.toFloat())
+        val gap = d(4f) + d(2f)
+        track(c, 0f, hx - gap, outerLeft = true, color = active)
+        track(c, hx + gap, width.toFloat(), outerLeft = false, color = inactive)
+        if (stops) {
+            for (i in 0..max) {
+                if (i == progress) continue
+                paint.color = if (i < progress) inactive else active
+                c.drawCircle(xOf(i.toFloat()), cy, d(2f), paint)
+            }
+        }
+        paint.color = active
+        // Nút kéo cao 44 dp; đang giữ thì ngắn lại còn 38 dp như Gboard (đo 2026-11-18).
+        val half = d(if (dragging) 19f else 22f)
+        rect.set(hx - d(2f), cy - half, hx + d(2f), cy + half)
+        c.drawRoundRect(rect, d(2f), d(2f), paint)
+    }
+
+    /**
+     * Bong bóng giá trị lúc kéo, như Gboard (đo 2026-11-18): tròn 32 dp màu tối, một chữ thì tròn, dài ("100%") thì thành
+     * viên thuốc; cách đỉnh nút kéo 7 dp; đè lên tiêu đề và hàng emoji phía trên. Vẽ trên lớp phủ của cửa sổ: vẽ tràn
+     * ra ngoài view thì Android không vẽ lại phần tràn, bong bóng không hiện (lỗi bản trước).
+     */
+    private val bubble = object : android.graphics.drawable.Drawable() {
+        var label = ""
+        override fun draw(c: android.graphics.Canvas) {
+            val r = android.graphics.RectF(bounds)
+            paint.color = Color.parseColor("#10131C")
+            c.drawRoundRect(r, r.height() / 2, r.height() / 2, paint)
+            c.drawText(label, r.centerX(), r.centerY() - (labelPaint.ascent() + labelPaint.descent()) / 2, labelPaint)
+        }
+        override fun setAlpha(alpha: Int) {}
+        override fun setColorFilter(cf: android.graphics.ColorFilter?) {}
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity() = android.graphics.PixelFormat.TRANSLUCENT
+    }
+    private var bubbleHost: ViewGroup? = null
+    private val loc = IntArray(2)
+    private val rootLoc = IntArray(2)
+
+    /** Đặt bong bóng trên nút kéo (đang giữ: nút cao 38 dp); không kéo thì gỡ bong bóng. */
+    private fun placeBubble() {
+        val hx = xOf(progress.toFloat())
+        val top = height / 2f - d(19f)
+        val label = labelOf?.takeIf { dragging }?.invoke(progress)
+        if (label == null) {
+            bubbleHost?.overlay?.remove(bubble)
+            bubbleHost = null
+            return
+        }
+        val host = bubbleHost ?: (rootView as? ViewGroup)?.also { it.overlay.add(bubble); bubbleHost = it } ?: return
+        getLocationInWindow(loc)
+        host.getLocationInWindow(rootLoc)
+        val x = loc[0] - rootLoc[0] + hx
+        val bottom = loc[1] - rootLoc[1] + top - d(7f)
+        val h = d(32f)
+        // Gboard (đo 2026-11-18): một ký tự ("8") là hình tròn 32 dp; viên "100%" rộng ≈ 59 dp = chữ + 13 dp mỗi bên.
+        val w = if (label.length <= 1) h else maxOf(h, labelPaint.measureText(label) + d(26f))
+        bubble.label = label
+        bubble.setBounds((x - w / 2).toInt(), (bottom - h).toInt(), (x + w / 2).toInt(), bottom.toInt())
+        bubble.invalidateSelf()
+    }
+
+    override fun onDetachedFromWindow() {
+        bubbleHost?.overlay?.remove(bubble)
+        bubbleHost = null
+        super.onDetachedFromWindow()
+    }
+
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (!isEnabled) return false
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                parent?.requestDisallowInterceptTouchEvent(true)
+                if (!dragging) {
+                    dragging = true
+                    invalidate()
+                }
+                val v = Math.round((e.x - inset) / (width - 2 * inset) * max).coerceIn(0, max)
+                if (v != progress) {
+                    progress = v
+                    onChange(v)
+                }
+                placeBubble()
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                parent?.requestDisallowInterceptTouchEvent(false)
+                dragging = false
+                invalidate()
+                placeBubble()
+            }
+        }
+        return true
+    }
+}
+
+fun Context.settingsSlider(
+    colors: SettingsColors,
+    max: Int,
+    value: Int,
+    labelOf: ((Int) -> String)? = null,
+    onChange: (Int) -> Unit,
+) = SettingsSlider(this, colors, max, value, labelOf, onChange)
+
+/**
+ * Khối có thanh kéo ngay trên trang (như "Cỡ chữ", "Kích thước biểu tượng cảm xúc" của Gboard): tiêu đề, dòng phụ,
+ * [preview] (nếu có), thanh kéo giữa hai hình nhỏ / to, nút viền đặt lại mặc định (mờ khi đang ở mặc định).
+ * Trả về hàm cập nhật dòng phụ và nút theo nấc đang chọn.
+ */
+fun LinearLayout.sliderBlock(
+    colors: SettingsColors,
+    title: String,
+    summary: String?,
+    preview: View?,
+    small: View,
+    large: View,
+    max: Int,
+    value: Int,
+    defaultValue: Int,
+    resetLabel: String,
+    summaryOf: ((Int) -> String)?,
+    labelOf: ((Int) -> String)? = null,
+    onChange: (Int) -> Unit,
+) {
+    val (block, summaryView) = textBlock(colors, title, summary)
+    block.setPadding(context.dpi(24), context.dpi(20), context.dpi(24), 0)
+    addView(block, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    if (preview != null) {
+        addView(preview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(context.dpi(24), context.dpi(16), context.dpi(24), 0)
+        })
+    }
+    lateinit var reset: TextView
+    lateinit var slider: SettingsSlider
+    fun show(v: Int) {
+        summaryOf?.let { summaryView.text = it(v); summaryView.visibility = View.VISIBLE }
+        reset.isEnabled = v != defaultValue
+        reset.alpha = if (v != defaultValue) 1f else 0.38f
+    }
+    slider = context.settingsSlider(colors, max, value, labelOf) {
+        onChange(it)
+        show(it)
+    }
+    // Bong bóng giá trị vẽ trên lớp phủ của cửa sổ (xem SettingsSlider.placeBubble), không cần tràn khỏi view.
+    clipChildren = false
+    val sliderRow = LinearLayout(context).apply {
+        clipChildren = false
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        // Gboard (354 dp): hình nhỏ giữa ở 48 dp, rãnh 86–276 dp, hình to giữa ở 310 dp.
+        setPadding(context.dpi(24), context.dpi(8), context.dpi(20), context.dpi(8))
+        addView(small, LinearLayout.LayoutParams(context.dpi(48), context.dpi(48)))
+        addView(slider, LinearLayout.LayoutParams(0, context.dpi(48), 1f).apply {
+            marginStart = context.dpi(14)
+            marginEnd = context.dpi(10)
+        })
+        addView(large, LinearLayout.LayoutParams(context.dpi(48), context.dpi(48)))
+    }
+    addView(sliderRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    reset = TextView(context).apply {
+        text = resetLabel
+        gravity = Gravity.CENTER
+        setTextColor(colors.accent)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+        background = GradientDrawable().apply {
+            cornerRadius = context.dp(28f)
+            setStroke(context.dpi(1), colors.summary)
+        }
+        setOnClickListener {
+            slider.progress = defaultValue
+            onChange(defaultValue)
+            show(defaultValue)
+        }
+    }
+    addView(reset, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, context.dpi(56)).apply {
+        setMargins(context.dpi(16), context.dpi(4), context.dpi(16), context.dpi(16))
+    })
+    show(value)
+}
+
+/** Dòng có công tắc bên phải (như "Lựa chọn ưu tiên" của Gboard); chạm cả dòng cũng bật / tắt. Trả về công tắc. */
 @Suppress("DEPRECATION")
 fun LinearLayout.switchItem(
     colors: SettingsColors,
@@ -325,7 +580,7 @@ fun LinearLayout.switchItem(
     summary: String? = null,
     value: Boolean,
     onChange: (Boolean) -> Unit,
-) {
+): Switch {
     val (block, _) = textBlock(colors, title, summary)
     val toggle = Switch(context).apply {
         isChecked = value
@@ -345,6 +600,7 @@ fun LinearLayout.switchItem(
         addView(toggle)
     }
     addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    return toggle
 }
 
 private val CHECKED = intArrayOf(android.R.attr.state_checked)
@@ -382,7 +638,7 @@ internal fun View.switchTrack(colors: SettingsColors): StateListDrawable {
 
 /** Tiêu đề nhóm nhỏ, màu nhấn (vd. "Phím tắt", "Bố cục" của Gboard). */
 fun LinearLayout.section(colors: SettingsColors, text: String) = addView(TextView(context).apply {
-    this.text = text
+    this.text = context.hanNomText(text)
     setTextColor(colors.accent)
     setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
     setPadding(context.dpi(24), context.dpi(24), context.dpi(24), context.dpi(8))
@@ -390,7 +646,7 @@ fun LinearLayout.section(colors: SettingsColors, text: String) = addView(TextVie
 
 /** Đoạn chữ giải thích. */
 fun LinearLayout.paragraph(colors: SettingsColors, text: String): TextView = TextView(context).apply {
-    this.text = text
+    this.text = context.hanNomText(text)
     setTextColor(colors.summary)
     setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
     setLineSpacing(0f, 1.2f)
@@ -420,7 +676,7 @@ private fun Context.fabButton(colors: SettingsColors, fab: Fab): View = LinearLa
         }, LinearLayout.LayoutParams(dpi(24), dpi(24)).apply { marginEnd = dpi(12) })
     }
     addView(TextView(context).apply {
-        text = fab.label
+        text = context.hanNomText(fab.label)
         setTextColor(colors.onPrimary)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
     })
@@ -525,7 +781,7 @@ fun LinearLayout.reorderList(
             setImageResource(R.drawable.ic_drag_handle)
             setColorFilter(colors.icon)
             scaleType = ImageView.ScaleType.CENTER
-            contentDescription = "Kéo để đổi thứ tự"
+            contentDescription = context.tr("Kéo để đổi thứ tự", "Drag to reorder", "捁抵𢷮次序")
         }
         row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL

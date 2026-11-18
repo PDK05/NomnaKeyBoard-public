@@ -31,10 +31,11 @@ class SettingsActivity : Activity() {
     }
 
     private lateinit var settings: Settings
+    /** [AppText.version] lúc dựng trang. */
+    private var textVersion = 0
     private lateinit var page: Page
-    /** Dòng phụ cần cập nhật khi quay lại trang (trạng thái bàn phím, phông, ngôn ngữ). */
+    /** Dòng phụ cần cập nhật khi quay lại trang (trạng thái bàn phím, ngôn ngữ). */
     private var status: TextView? = null
-    private var fontSummary: TextView? = null
     private var languagesSummary: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,6 +46,7 @@ class SettingsActivity : Activity() {
             splashScreen.setOnExitAnimationListener(::playSplash)
         }
         settings = Settings(this)
+        textVersion = AppText.version
         page = runCatching { Page.valueOf(intent.getStringExtra(EXTRA_PAGE)!!) }.getOrDefault(Page.MAIN)
         when (page) {
             Page.MAIN -> mainPage()
@@ -99,10 +101,14 @@ class SettingsActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // Đã đổi ngôn ngữ ứng dụng ở trang khác: dựng lại trang này bằng ngôn ngữ mới.
+        if (textVersion != AppText.version) {
+            recreate()
+            return
+        }
         if (page == Page.LANGUAGES) languagesPage()
         status?.text = keyboardStatus()
-        fontSummary?.text = if (settings.fontFile.exists()) "Phông riêng bạn đã chọn" else "MiSans L3 (đi kèm)"
-        languagesSummary?.text = settings.keyboards.map { it.mode.title }.distinct().joinToString(", ")
+        languagesSummary?.text = settings.keyboards.map { it.mode.titleIn(this) }.distinct().joinToString(", ")
     }
 
     private fun open(p: Page) = startActivity(Intent(this, SettingsActivity::class.java).putExtra(EXTRA_PAGE, p.name))
@@ -121,30 +127,30 @@ class SettingsActivity : Activity() {
     /** Mở từ biểu tượng ứng dụng (không phải từ nút cài đặt của bàn phím): trang chính không có gì để quay lại. */
     private val fromLauncher get() = intent.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_LAUNCHER)
 
-    private fun mainPage() = settingsPage("Bàn phím Hán Nôm", back = !fromLauncher) { c ->
-        status = item(c, "Bật bàn phím", keyboardStatus(), R.drawable.ic_keyboard) { open(Page.SETUP) }
-        languagesSummary = item(c, "Ngôn ngữ", null, R.drawable.ic_language) { open(Page.LANGUAGES) }
-        item(c, "Lựa chọn ưu tiên", null, R.drawable.ic_tune) { open(Page.PREFERENCES) }
-        item(c, "Giao diện", null, R.drawable.ic_palette) { open(Page.APPEARANCE) }
-        item(c, "Chỉnh sửa và đề xuất", null, R.drawable.ic_spellcheck) { open(Page.SUGGESTIONS) }
-        item(c, "Từ điển", null, R.drawable.ic_menu_book) {
+    private fun mainPage() = settingsPage(tr("Bàn phím Hán Nôm", "Bàn phím Hán Nôm", "盤柉漢喃"), back = !fromLauncher) { c ->
+        status = item(c, tr("Bật bàn phím", "Enable keyboard", "弼盤柉"), keyboardStatus(), R.drawable.ic_keyboard) { open(Page.SETUP) }
+        languagesSummary = item(c, tr("Ngôn ngữ", "Languages", "言語"), null, R.drawable.ic_language) { open(Page.LANGUAGES) }
+        item(c, tr("Lựa chọn ưu tiên", "Preferences", "攄𫾗優先"), null, R.drawable.ic_tune) { open(Page.PREFERENCES) }
+        item(c, tr("Giao diện", "Theme", "交面"), null, R.drawable.ic_palette) { open(Page.APPEARANCE) }
+        item(c, tr("Chỉnh sửa và đề xuất", "Corrections & suggestions", "整𢯢吧提出"), null, R.drawable.ic_spellcheck) { open(Page.SUGGESTIONS) }
+        item(c, tr("Từ điển", "Dictionary", "辭典"), null, R.drawable.ic_menu_book) {
             startActivity(Intent(this@SettingsActivity, DictionaryActivity::class.java))
         }
-        item(c, "Quyền riêng tư", null, R.drawable.ic_shield) { open(Page.PRIVACY) }
-        item(c, "Giới thiệu", null, R.drawable.ic_info) { open(Page.ABOUT) }
+        item(c, tr("Quyền riêng tư", "Privacy", "權𥢆私"), null, R.drawable.ic_shield) { open(Page.PRIVACY) }
+        item(c, tr("Giới thiệu", "About", "介紹"), null, R.drawable.ic_info) { open(Page.ABOUT) }
     }
 
-    private fun setupPage() = settingsPage("Bật bàn phím") { c ->
+    private fun setupPage() = settingsPage(tr("Bật bàn phím", "Enable keyboard", "弼盤柉")) { c ->
         status = paragraph(c, keyboardStatus())
-        item(c, "1. Bật Bàn phím Hán Nôm", "Trong danh sách bàn phím của hệ thống") {
+        item(c, tr("1. Bật Bàn phím Hán Nôm", "1. Enable Bàn phím Hán Nôm", "1. 弼盤柉漢喃"), tr("Trong danh sách bàn phím của hệ thống", "In the system keyboard list", "𥪝名冊盤柉𧵑系統")) {
             startActivity(Intent(SystemSettings.ACTION_INPUT_METHOD_SETTINGS))
         }
-        item(c, "2. Chọn Bàn phím Hán Nôm", "Làm bàn phím đang dùng") {
+        item(c, tr("2. Chọn Bàn phím Hán Nôm", "2. Select Bàn phím Hán Nôm", "2. 𫾗盤柉𧵑漢喃"), tr("Làm bàn phím đang dùng", "As the current keyboard", "爫盤柉當用")) {
             (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
         }
-        section(c, "Gõ thử")
+        section(c, tr("Gõ thử", "Try it", "𢱗試"))
         addView(EditText(context).apply {
-            hint = "Gõ thử ở đây"
+            hint = tr("Gõ thử ở đây", "Type here to try", "𢱗試於低")
             setTextColor(c.text)
             setHintTextColor(c.summary)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
@@ -157,15 +163,32 @@ class SettingsActivity : Activity() {
 
     /** Danh sách bàn phím đã thêm (như "Ngôn ngữ" của Gboard): mỗi dòng một ngôn ngữ và bố cục. */
     private fun languagesPage() = settingsPage(
-        "Ngôn ngữ",
-        action = BarAction(R.drawable.ic_edit, "Sửa") { open(Page.LANGUAGES_EDIT) },
-        fab = Fab("Thêm bàn phím", R.drawable.ic_add) { open(Page.ADD_KEYBOARD) },
+        tr("Ngôn ngữ", "Languages", "言語"),
+        action = BarAction(R.drawable.ic_edit, tr("Sửa", "Edit", "𢯢")) { open(Page.LANGUAGES_EDIT) },
+        fab = Fab(tr("Thêm bàn phím", "Add keyboard", "添盤柉"), R.drawable.ic_add) { open(Page.ADD_KEYBOARD) },
     ) { c ->
-        section(c, "Ngôn ngữ và bố cục bàn phím")
-        for (k in settings.keyboards) {
-            item(c, k.mode.title, k.layout.title(k.mode)) { openLanguage(k.mode, adding = false) }
+        // Ngôn ngữ ứng dụng (chữ trong ứng dụng cài đặt), đầu trang như người dùng muốn 2026-11-18.
+        val langs = listOf(AppLang.SYSTEM, AppLang.VI, AppLang.NOM, AppLang.EN)
+        // Mỗi ngôn ngữ ghi bằng chính ngôn ngữ đó (như danh sách ngôn ngữ của Android); "theo hệ thống" theo ngôn ngữ đang dùng.
+        fun langName(l: AppLang) = when (l) {
+            AppLang.SYSTEM -> tr("Mặc định của hệ thống", "System default", "默定𧵑系統")
+            // Bản Hán Nôm: 㗂越, 㗂英 (người dùng đặt 2026-11-18).
+            AppLang.VI -> tr("Tiếng Việt", "Tiếng Việt", "㗂越")
+            // Người dùng đặt 2026-11-18: "Tiếng Việt (Hán Nôm)", viết bằng Hán Nôm là 㗂越 (漢喃) (như trang Từ điển).
+            AppLang.NOM -> tr("Tiếng Việt (Hán Nôm)", "Vietnamese (Han Nom)", "㗂越 (漢喃)")
+            AppLang.EN -> tr("English", "English", "㗂英")
         }
-        paragraph(c, "Chạm phím chế độ (bên trái phím cách) để chuyển lần lượt các bàn phím theo thứ tự trên.")
+        item(c, tr("Ngôn ngữ ứng dụng", "App language", "言語應用"), langName(AppText.chosen(this@SettingsActivity))) {
+            choose(tr("Ngôn ngữ ứng dụng", "App language", "言語應用"), langs.map(::langName), langs.indexOf(AppText.chosen(this@SettingsActivity))) {
+                AppText.set(this@SettingsActivity, langs[it])
+                recreate()
+            }
+        }
+        section(c, tr("Ngôn ngữ và bố cục bàn phím", "Keyboard languages & layouts", "言語吧佈局"))
+        for (k in settings.keyboards) {
+            item(c, k.mode.titleIn(this@SettingsActivity), k.layout.titleIn(k.mode, this@SettingsActivity)) { openLanguage(k.mode, adding = false) }
+        }
+        paragraph(c, tr("Chạm phím chế độ (bên trái phím cách) để chuyển lần lượt các bàn phím theo thứ tự trên.", "Tap the mode key (left of the space bar) to cycle through the keyboards in the order above.", "𫼜柉制度（邊𢁑柉隔）抵轉𨁮𦀎各盤柉蹺次序𨑗"))
     }
 
     /** Sửa danh sách: đánh dấu rồi xoá, kéo tay nắm để đổi thứ tự. */
@@ -173,12 +196,12 @@ class SettingsActivity : Activity() {
         val checked = mutableSetOf<Int>()
         fun build() {
             val list = settings.keyboards
-            settingsPage("Ngôn ngữ", action = BarAction(R.drawable.ic_delete, "Xoá") {
+            settingsPage(tr("Ngôn ngữ", "Languages", "言語"), action = BarAction(R.drawable.ic_delete, tr("Xoá", "Delete", "𫨮")) {
                 // Đọc lại danh sách: kéo đổi thứ tự lưu ngay mà không dựng lại trang.
                 val current = settings.keyboards
                 when {
-                    checked.isEmpty() -> toast("Đánh dấu bàn phím cần xoá")
-                    checked.size == current.size -> toast("Phải giữ lại ít nhất một bàn phím")
+                    checked.isEmpty() -> toast(tr("Đánh dấu bàn phím cần xoá", "Select the keyboards to delete", "打𨁪盤柉勤𫨮"))
+                    checked.size == current.size -> toast(tr("Phải giữ lại ít nhất một bàn phím", "Keep at least one keyboard", "𬆃貯徠𠃣一𠬠盤柉"))
                     else -> {
                         settings.keyboards = current.filterIndexed { i, _ -> i !in checked }
                         checked.clear()
@@ -186,9 +209,9 @@ class SettingsActivity : Activity() {
                     }
                 }
             }) { c ->
-                section(c, "Ngôn ngữ và bố cục bàn phím")
+                section(c, tr("Ngôn ngữ và bố cục bàn phím", "Keyboard languages & layouts", "言語吧佈局"))
                 // Dòng đã tự chuyển chỗ trong danh sách: chỉ lưu thứ tự mới, không dựng lại trang (đỡ giật).
-                reorderList(c, list.map { it.mode.title to it.layout.title(it.mode) }, checked) { from, to ->
+                reorderList(c, list.map { it.mode.titleIn(this@SettingsActivity) to it.layout.titleIn(it.mode, this@SettingsActivity) }, checked) { from, to ->
                     settings.keyboards = settings.keyboards.toMutableList().apply { add(to, removeAt(from)) }
                 }
             }
@@ -197,10 +220,10 @@ class SettingsActivity : Activity() {
     }
 
     /** Chọn ngôn ngữ để thêm; trang ngôn ngữ mở ra để chọn bố cục. */
-    private fun addKeyboardPage() = settingsPage("Thêm bàn phím") { c ->
-        section(c, "Tất cả ngôn ngữ")
+    private fun addKeyboardPage() = settingsPage(tr("Thêm bàn phím", "Add keyboard", "添盤柉")) { c ->
+        section(c, tr("Tất cả ngôn ngữ", "All languages", "畢𪥘󠄁言語"))
         for (m in Mode.entries) {
-            item(c, m.title, Layout.entries.filter { it.available(m) }.joinToString(", ") { it.title(m) }) { openLanguage(m, adding = true) }
+            item(c, m.titleIn(this@SettingsActivity), Layout.entries.filter { it.available(m) }.joinToString(", ") { it.titleIn(m, this@SettingsActivity) }) { openLanguage(m, adding = true) }
         }
     }
 
@@ -218,23 +241,23 @@ class SettingsActivity : Activity() {
             val kept = others.filter { it.mode != mode || it.layout in chosen }
             settings.keyboards = kept + layouts.filter { it in chosen && Keyboard(mode, it) !in kept }.map { Keyboard(mode, it) }
         }
-        val done = if (adding) Fab("Xong", R.drawable.ic_check) {
+        val done = if (adding) Fab(tr("Xong", "Done", "歱"), R.drawable.ic_check) {
             save()
             setResult(RESULT_OK)
             finish()
         } else null
-        settingsPage(mode.title, fab = done) { c ->
+        settingsPage(mode.titleIn(this), fab = done) { c ->
             val previews = layouts.associateWith { KeyboardPreview(context, mode, it) }
-            val options = layouts.map { LayoutOption(previews.getValue(it), it.title(mode)) }
+            val options = layouts.map { LayoutOption(previews.getValue(it), it.titleIn(mode, this@SettingsActivity)) }
             layoutChooser(c, options, layouts.indices.filter { layouts[it] in chosen }.toSet()) { i, on ->
                 val layout = layouts[i]
                 val rest = settings.keyboards.filterNot { it.mode == mode && it.layout == layout }
                 if (!on && !adding && rest.isEmpty()) {
-                    toast("Phải giữ lại ít nhất một bàn phím")
+                    toast(tr("Phải giữ lại ít nhất một bàn phím", "Keep at least one keyboard", "𬆃貯徠𠃣一𠬠盤柉"))
                     return@layoutChooser false
                 }
                 if (!on && adding && chosen.size == 1) {
-                    toast("Chọn ít nhất một bố cục")
+                    toast(tr("Chọn ít nhất một bố cục", "Choose at least one layout", "𫾗𠃣一𠬠佈局"))
                     return@layoutChooser false
                 }
                 if (on) chosen.add(layout) else chosen.remove(layout)
@@ -250,109 +273,198 @@ class SettingsActivity : Activity() {
      * Tiếng Việt (Latinh) và Hán Nôm.
      */
     private fun LinearLayout.toneStyleItem(c: SettingsColors) {
-        val styles = listOf("Kiểu cũ: hòa, thủy", "Kiểu mới: hoà, thuỷ")
+        val styles = listOf(tr("Kiểu cũ: hòa, thủy", "Old style: hòa, thủy", "矯𫇰"), tr("Kiểu mới: hoà, thuỷ", "New style: hoà, thuỷ", "矯𬔫"))
         lateinit var styleSummary: TextView
-        styleSummary = item(c, "Kiểu đặt dấu", styles[settings.toneStyle]) {
-            choose("Kiểu đặt dấu", styles, settings.toneStyle) {
+        styleSummary = item(c, tr("Kiểu đặt dấu", "Tone mark placement", "矯撻𨁪"), styles[settings.toneStyle]) {
+            choose(tr("Kiểu đặt dấu", "Tone mark placement", "矯撻𨁪"), styles, settings.toneStyle) {
                 settings.toneStyle = it
                 styleSummary.text = styles[it]
             }
         }
-        paragraph(c, "Chỉ áp dụng cho bố cục QWERTY (Telex), dùng chung cho Tiếng Việt (Latinh) và 㗂越 (漢喃).")
+        paragraph(c, tr("Chỉ áp dụng cho bố cục QWERTY (Telex), dùng chung cho Tiếng Việt (Latinh) và 㗂越 (漢喃).", "Applies only to the QWERTY (Telex) layout, shared by Vietnamese (Latin) and Vietnamese (Han Nom).", "只壓用賙佈局，用終賙㗂越（Latin）吧㗂越 (漢喃)."))
     }
 
     /** Cài đặt và hướng dẫn gõ riêng của từng ngôn ngữ, dưới dải chọn bố cục. */
     private fun LinearLayout.languageSettings(c: SettingsColors, mode: Mode) {
         when (mode) {
             Mode.QUOC_NGU -> {
-                section(c, "Cài đặt QWERTY (Telex)")
-                paragraph(c, "Telex tự do như Unikey: dấu gõ ở đâu trong chữ cũng được (toots → tốt, vieetj → việt).")
+                section(c, tr("Cài đặt QWERTY (Telex)", "QWERTY (Telex) settings", "掑撻QWERTY (Telex)"))
+                paragraph(c, tr("Telex tự do như Unikey: dấu gõ ở đâu trong chữ cũng được (toots → tốt, vieetj → việt).", "Free Telex like Unikey: marks can be typed anywhere in the word (toots → tốt, vieetj → việt)."))
                 toneStyleItem(c)
             }
             Mode.HAN_NOM -> {
-                section(c, "Quy tắc gõ QWERTY (Telex)")
-                paragraph(c, "Gõ âm đọc bằng Telex như Unikey rồi chọn chữ Hán / Nôm trên thanh gợi ý: aa â, ee ê, oo ô, " +
-                    "aw ă, ow ơ, uw ư, dd đ; dấu thanh s f r x j gõ ở đâu trong chữ cũng được (hasn → hán, toots → tốt).")
-                paragraph(c, "• Gõ không dấu cũng được (tot ra cả tốt, tột…); dấu đã gõ dùng để lọc gợi ý.")
-                paragraph(c, "• Các chữ phải cách nhau bằng phím cách (quoocs vieetj → 國越), gõ liền không tự tách; " +
-                    "chữ cuối gõ dở cũng được. Cách một lần là tách chữ, lần nữa để chọn gợi ý đầu; Enter đưa ra " +
-                    "đúng chữ Quốc ngữ trong khung gõ.")
-                section(c, "Cài đặt QWERTY (Telex)")
+                section(c, tr("Quy tắc gõ QWERTY (Telex)", "QWERTY (Telex) typing rules", "規則𢱗QWERTY (Telex)"))
+                paragraph(c, tr(
+                    "Gõ âm đọc bằng Telex như Unikey rồi chọn chữ Hán / Nôm trên thanh gợi ý: aa â, ee ê, oo ô, " +
+                        "aw ă, ow ơ, uw ư, dd đ; dấu thanh s f r x j gõ ở đâu trong chữ cũng được (hasn → hán, toots → tốt).",
+                    "Type the reading in Telex like Unikey, then pick the Hán / Nôm character on the suggestion bar: aa â, " +
+                        "ee ê, oo ô, aw ă, ow ơ, uw ư, dd đ; tone keys s f r x j can go anywhere in the word (hasn → hán, " +
+                        "toots → tốt).",
+                ))
+                paragraph(c, tr("• Gõ không dấu cũng được (tot ra cả tốt, tột…); dấu đã gõ dùng để lọc gợi ý.", "• Marks are optional (tot gives tốt, tột…); typed marks filter the suggestions."))
+                paragraph(c, tr(
+                    "• Các chữ phải cách nhau bằng phím cách (quoocs vieetj → 國越), gõ liền không tự tách; " +
+                        "chữ cuối gõ dở cũng được. Cách một lần là tách chữ, lần nữa để chọn gợi ý đầu; Enter đưa ra " +
+                        "đúng chữ Quốc ngữ trong khung gõ.",
+                    "• Separate words with the space bar (quoocs vieetj → 國越); words typed together are not split. " +
+                        "The last word may be unfinished. One space separates words, another picks the first " +
+                        "suggestion; Enter inserts the Quốc ngữ text in the composing box as typed.",
+                ))
+                section(c, tr("Cài đặt QWERTY (Telex)", "QWERTY (Telex) settings", "掑撻QWERTY (Telex)"))
                 toneStyleItem(c)
             }
             Mode.ENGLISH -> {
-                section(c, "Cài đặt QWERTY")
-                paragraph(c, "Gõ thẳng chữ Latinh, không ghép dấu tiếng Việt.")
+                section(c, tr("Cài đặt QWERTY", "QWERTY settings"))
+                paragraph(c, tr("Gõ thẳng chữ Latinh, không ghép dấu tiếng Việt.", "Types Latin letters directly, without Vietnamese marks."))
             }
         }
     }
 
-    private fun preferencesPage() = settingsPage("Lựa chọn ưu tiên") { c ->
-        section(c, "Phím")
-        switchItem(c, "Tự động viết hoa", "Viết hoa chữ đầu tiên của mỗi câu", settings.autoCap) { settings.autoCap = it }
+    /**
+     * "Lựa chọn ưu tiên", chép thứ tự và nhãn từ Gboard (đo trên điện thoại 2026-11-18): Phím, Giao diện, Bố cục, Gõ
+     * phím. Các mục Gboard có mà người dùng chưa muốn (phím emoji, phím đổi ngôn ngữ, phím phẩy, dải gợi ý, một tay,
+     * phím tắt, cửa sổ bật lên, thời gian giữ, biểu tượng ứng dụng) không có ở đây; mục "Tự động viết hoa" cũng bỏ khỏi
+     * trang này (người dùng muốn 2026-11-18). Mục "Bố cục" (chiều cao, khoảng trống dưới bàn phím) cũng bỏ: chỉnh
+     * ngay trên bàn phím bằng nút Kích thước (người dùng muốn 2026-11-18).
+     */
+    private fun preferencesPage() = settingsPage(tr("Lựa chọn ưu tiên", "Preferences", "攄𫾗優先")) { c ->
+        section(c, tr("Phím", "Keys", "柉"))
+        lateinit var passwordRow: android.widget.Switch
+        switchItem(c, tr("Hàng số", "Number row", "行數"), tr("Luôn hiển thị trên các bố cục QWERTY, Telex", "Always show on QWERTY, Telex layouts", "㫻顯示𨑗各佈局QWERTY，Telex"), settings.numberRow) {
+            settings.numberRow = it
+            setRowEnabled(rowOf(passwordRow), !it)
+        }
+        passwordRow = switchItem(
+            c, tr("Hàng số cho mật khẩu", "Number row for passwords", "行數賙密口"), tr("Luôn hiển thị trên QWERTY, Telex để nhập mật khẩu", "Always show on QWERTY, Telex when entering passwords", "㫻顯示𨑗QWERTY，Telex抵入密口"), settings.numberRowPassword,
+        ) { settings.numberRowPassword = it }
+        setRowEnabled(rowOf(passwordRow), !settings.numberRow)
 
-        section(c, "Gõ phím")
-        switchItem(c, "Âm thanh", "Phát khi nhấn phím", settings.sound) { settings.sound = it }
-        switchItem(c, "Rung khi thao tác với bàn phím", null, settings.vibrate) { settings.vibrate = it }
-
-        section(c, "Bố cục")
-        val heights = listOf("Thấp", "Vừa", "Cao")
-        lateinit var heightSummary: TextView
-        heightSummary = item(c, "Chiều cao bàn phím", if (settings.customHeight) "Tuỳ chỉnh" else heights[settings.height]) {
-            choose("Chiều cao bàn phím", heights, settings.height) {
-                settings.height = it
-                heightSummary.text = heights[it]
+        section(c, tr("Giao diện", "Theme", "交面"))
+        val fonts = listOf(tr("Phông chữ mặc định của bàn phím", "Keyboard default font", "風𡨸默定𧵑盤柉"), tr("Phông chữ mặc định của hệ thống", "System default font", "風𡨸默定𧵑系統"))
+        lateinit var fontSummary: TextView
+        fontSummary = item(c, tr("Phông chữ", "Font", "風𡨸"), fonts[if (settings.systemFont) 1 else 0]) {
+            choose(tr("Phông chữ", "Font", "風𡨸"), fonts, if (settings.systemFont) 1 else 0) {
+                settings.systemFont = it == 1
+                fontSummary.text = fonts[it]
             }
         }
-        val gaps = listOf(0, 8, 16, 24, 32, 48, 64)
-        fun gapText(dp: Int) = if (dp == 0) "Không" else "$dp dp"
-        lateinit var gapSummary: TextView
-        gapSummary = item(c, "Khoảng trống dưới bàn phím", gapText(settings.bottomGap)) {
-            val current = gaps.indexOf(settings.bottomGap).let { if (it < 0) gaps.indexOfFirst { g -> g >= settings.bottomGap } else it }
-            choose("Khoảng trống dưới bàn phím", gaps.map(::gapText), current.coerceAtLeast(0)) {
-                settings.bottomGap = gaps[it]
-                gapSummary.text = gapText(gaps[it])
+        val sizes = Settings.FONT_SIZES
+        fun sizeText(i: Int) = if (sizes[i] == Settings.DEFAULT) tr("Giống như thiết bị", "Same as device", "𠏳如設備") else "${sizes[i]}%"
+        fun tt(sp: Float) = TextView(this@SettingsActivity).apply {
+            text = "Tt"
+            gravity = Gravity.CENTER
+            setTextColor(c.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        val sizeIndex = sizes.indexOf(settings.fontSize).coerceAtLeast(0)
+        sliderBlock(
+            c, tr("Cỡ chữ", "Font size", "𢤫𡨸"), sizeText(sizeIndex), null, tt(16f), tt(28f), sizes.lastIndex, sizeIndex,
+            sizes.indexOf(Settings.DEFAULT), tr("Sử dụng cỡ chữ của thiết bị", "Use device font size", "使用𢤫𡨸𧵑設備"), ::sizeText,
+            // Bong bóng lúc kéo như Gboard: số phần trăm (nấc mặc định là 100%).
+            labelOf = { i -> if (sizes[i] == Settings.DEFAULT) "100%" else "${sizes[i]}%" },
+        ) { settings.fontSize = sizes[it] }
+
+        val emoji = listOf("😂", "😘", "😀", "❤️", "😭", "😎", "🔥", "🎉", "👍")
+        val emojiPreview = LinearLayout(this@SettingsActivity).apply { orientation = LinearLayout.HORIZONTAL }
+        fun showEmoji(step: Int) {
+            emojiPreview.removeAllViews()
+            val n = Settings.EMOJI_COLUMNS[step]
+            val cell = (resources.displayMetrics.widthPixels - dpi(48)) / n
+            emoji.take(n).forEach { e ->
+                emojiPreview.addView(TextView(this@SettingsActivity).apply {
+                    text = e
+                    gravity = Gravity.CENTER
+                    // Màu chữ mặc định có độ trong suốt, làm emoji màu bị mờ.
+                    setTextColor(android.graphics.Color.BLACK)
+                    setTextSize(TypedValue.COMPLEX_UNIT_PX, cell * 0.62f * Settings.EMOJI_SCALE[step])
+                    // Vùng emoji cao cố định, emoji căn giữa: đổi nấc thì thanh kéo và nút bên dưới đứng yên. Gboard (đo
+                    // 2026-11-18, nấc 9 và nấc 5): tâm hàng emoji luôn cách tâm thanh kéo 64 dp = 64 / 2 + 8 (đệm) + 24.
+                }, LinearLayout.LayoutParams(0, dpi(64), 1f))
             }
         }
-        paragraph(c, "Thanh điều hướng che mất hàng phím dưới cùng thì tăng khoảng trống này. Cũng chỉnh được ngay " +
-            "trên bàn phím: nút Kích thước trên thanh công cụ, kéo cạnh trên để đổi chiều cao, kéo cạnh dưới hay " +
-            "nút ✥ để đẩy bàn phím lên.")
-    }
-
-    private fun appearancePage() = settingsPage("Giao diện") { c ->
-        paragraph(c, "Bàn phím sáng / tối theo chế độ của hệ thống.")
-        section(c, "Chữ Hán Nôm")
-        fontSummary = item(c, "Phông Hán Nôm", null) { pickFont() }
-        item(c, "Dùng lại phông đi kèm", null) {
-            settings.fontFile.delete()
-            toast("Đã dùng lại phông đi kèm")
-            onResume()
+        showEmoji(settings.emojiSize)
+        // Mặt cười nét viền một màu ở hai đầu thanh kéo, như Gboard.
+        fun face(padDp: Int) = ImageView(this@SettingsActivity).apply {
+            setImageResource(R.drawable.ic_emoji)
+            setColorFilter(c.text)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(dpi(padDp), dpi(padDp), dpi(padDp), dpi(padDp))
         }
-        paragraph(c, "Phông chỉ áp dụng trong bàn phím và ứng dụng này. Ứng dụng khác dùng phông của máy, " +
-            "nên chữ Nôm hiếm có thể vẫn hiện thành ô vuông ở đó.")
+        sliderBlock(
+            c, tr("Kích thước biểu tượng cảm xúc", "Emoji size", "戟𡱩表象感觸"), tr("Đặt kích thước và số lượng biểu tượng cảm xúc hiển thị trong một hàng", "Set the size and number of emoji shown in a row", "撻戟𡱩吧數量表象感觸顯示𥪝𠬠行"),
+            emojiPreview, face(14), face(7), Settings.EMOJI_COLUMNS.lastIndex, settings.emojiSize,
+            Settings.DEFAULT_EMOJI_SIZE, tr("Dùng kích thước mặc định", "Use default", "用戟𡱩默定"), null,
+            // Bong bóng lúc kéo như Gboard: số emoji một hàng, nấc to hơn cùng số cột có dấu + ("8+").
+            labelOf = { i ->
+                val n = Settings.EMOJI_COLUMNS[i]
+                if (i > 0 && Settings.EMOJI_COLUMNS[i - 1] == n) "$n+" else "$n"
+            },
+        ) {
+            settings.emojiSize = it
+            showEmoji(it)
+        }
+
+        section(c, tr("Gõ phím", "Key tap", "𢱗柉"))
+        lateinit var volumeSummary: TextView
+        fun volumeText() = if (settings.volume == Settings.DEFAULT) tr("Mặc định của hệ thống", "System default", "默定𧵑系統") else "${settings.volume}%"
+        switchItem(c, tr("Âm thanh", "Sound", "音聲"), tr("Phát khi nhấn phím", "Play when tapping keys", "發欺扨柉"), settings.sound) {
+            settings.sound = it
+            setRowEnabled(rowOf(volumeSummary), it)
+        }
+        volumeSummary = item(c, tr("Âm lượng", "Volume", "音量"), volumeText()) {
+            sliderDialog(tr("Âm lượng", "Volume", "音量"), 100, settings.volume.coerceAtLeast(0), settings.volume, { if (it < 0) tr("Mặc định của hệ thống", "System default", "默定𧵑系統") else "$it%" }, { v ->
+                if (v >= 0) keyClick(this@SettingsActivity, v)
+            }) {
+                settings.volume = it
+                volumeSummary.text = volumeText()
+            }
+        }
+        setRowEnabled(rowOf(volumeSummary), settings.sound)
+        lateinit var vibrationSummary: TextView
+        fun msText(ms: Int) = if (ms <= 0) tr("Mặc định của hệ thống", "System default", "默定𧵑系統") else tr("$ms mili giây", "$ms ms", "${ms}mili𣆰")
+        switchItem(c, tr("Rung khi thao tác với bàn phím", "Keyboard vibration", "搈朞操作唄盤柉"), null, settings.vibrate) {
+            settings.vibrate = it
+            setRowEnabled(rowOf(vibrationSummary), it)
+        }
+        vibrationSummary = item(c, tr("Cường độ rung khi nhấn phím", "Vibration strength on keypress", "強度搈朞扨柉"), msText(settings.vibrationMs)) {
+            val ms = settings.vibrationMs
+            sliderDialog(tr("Cường độ rung khi nhấn phím", "Vibration strength on keypress", "強度搈朞扨柉"), Settings.MAX_VIBRATION_MS, ms.coerceAtLeast(0), ms, ::msText, { v ->
+                keyVibrate(this@SettingsActivity, window.decorView, if (v <= 0) Settings.DEFAULT else v)
+            }) {
+                val v = if (it <= 0) Settings.DEFAULT else it
+                settings.vibrationMs = v
+                vibrationSummary.text = msText(v)
+            }
+        }
+        setRowEnabled(rowOf(vibrationSummary), settings.vibrate)
     }
 
-    private fun suggestionsPage() = settingsPage("Chỉnh sửa và đề xuất") { c ->
-        section(c, "Gợi ý")
-        switchItem(c, "Học thói quen chọn chữ", "Chữ hay chọn được đưa lên trước", settings.learning) { settings.learning = it }
-        item(c, "Xoá dữ liệu học", "Xoá toàn bộ thói quen chọn chữ đã học") {
-            confirm("Xoá toàn bộ dữ liệu học thói quen?") {
+    private fun appearancePage() = settingsPage(tr("Giao diện", "Theme", "交面")) { c ->
+        ThemePicker(this@SettingsActivity, c).attach(this)
+    }
+
+    private fun suggestionsPage() = settingsPage(tr("Chỉnh sửa và đề xuất", "Corrections & suggestions", "整𢯢吧提出")) { c ->
+        section(c, tr("Gợi ý", "Suggestions", "㨳意"))
+        switchItem(c, tr("Học thói quen chọn chữ", "Learn word choices", "學𢟔慣"), tr("Chữ hay chọn được đưa lên trước", "Words you pick often move up", "𡨸咍𫾗得迻𬨠𠓀"), settings.learning) { settings.learning = it }
+        item(c, tr("Xoá dữ liệu học", "Delete learned data", "𫨮與料學"), tr("Xoá toàn bộ thói quen chọn chữ đã học", "Delete all learned word choices", "𫨮全部𢟔慣𡨸㐌學")) {
+            confirm(tr("Xoá toàn bộ dữ liệu học thói quen?", "Delete all learned data?", "𫨮全部與料學𢟔慣？")) {
                 HanNomEngine.get(this@SettingsActivity).clearLearned()
-                toast("Đã xoá dữ liệu học")
+                toast(tr("Đã xoá dữ liệu học", "Learned data deleted", "㐌𫨮與料學"))
             }
         }
         if (!Handwriting.available(this@SettingsActivity)) return@settingsPage
         val hw = Handwriting.get(this@SettingsActivity)
-        val none = "Chưa có. Khi gợi ý đầu sai, chọn chữ đúng ở các gợi ý sau là bàn phím tự nhớ"
-        section(c, "Viết tay")
-        val learned = item(c, "Chữ viết tay đã dạy", "…") {}
-        hw.learnedCount { learned.text = if (it == 0) none else "$it mẫu" }
-        item(c, "Xuất mẫu viết tay", "Tệp văn bản gồm nét viết và chữ đúng, dùng để cải thiện bộ nhận dạng") { pickHandwritingExport() }
-        item(c, "Xoá chữ viết tay đã dạy", null) {
-            confirm("Xoá toàn bộ chữ viết tay đã dạy?") {
+        val none = tr("Chưa có. Khi gợi ý đầu sai, chọn chữ đúng ở các gợi ý sau là bàn phím tự nhớ", "None yet. When the first suggestion is wrong, pick the right character from the others and the keyboard remembers it", "𣗓𣎏。欺㨳意頭差，𫾗𡨸倲於各㨳意𢖖󠄁𪜀盤柉自𢖵")
+        section(c, tr("Viết tay", "Handwriting", "𢪏𢬣"))
+        val learned = item(c, tr("Chữ viết tay đã dạy", "Taught handwriting", "𡨸𢪏𢬣㐌𠰺"), "…") {}
+        hw.learnedCount { learned.text = if (it == 0) none else tr("$it mẫu", "$it samples", "${it}母") }
+        item(c, tr("Xuất mẫu viết tay", "Export handwriting samples", "出母𢪏𢬣"), tr("Tệp văn bản gồm nét viết và chữ đúng, dùng để cải thiện bộ nhận dạng", "A text file of strokes and correct characters, used to improve the recognizer", "集文本𠁟涅𢪏吧𡨸倲，用抵改善部認樣")) { pickHandwritingExport() }
+        item(c, tr("Xoá chữ viết tay đã dạy", "Delete taught handwriting", "𫨮𡨸𢪏𢬣"), null) {
+            confirm(tr("Xoá toàn bộ chữ viết tay đã dạy?", "Delete all taught handwriting?", "𫨮全部𡨸𢪏𢬣㐌𠰺")) {
                 hw.clearLearned()
                 learned.text = none
-                toast("Đã xoá chữ viết tay đã dạy")
+                toast(tr("Đã xoá chữ viết tay đã dạy", "Taught handwriting deleted", "㐌𫨮全部𡨸𢪏𢬣㐌𠰺"))
             }
         }
     }
@@ -366,16 +478,21 @@ class SettingsActivity : Activity() {
         }, REQUEST_EXPORT_HANDWRITING)
     }
 
-    private fun privacyPage() = settingsPage("Quyền riêng tư") { c ->
-        paragraph(c, "Bàn phím không kết nối mạng và không gửi đi bất cứ thứ gì bạn gõ. " +
-            "Ô mật khẩu luôn gõ tiếng Anh và không học thói quen.")
-        paragraph(c, "Từ điển và dữ liệu học chỉ lưu trong máy, ở thư mục riêng của ứng dụng.")
+    private fun privacyPage() = settingsPage(tr("Quyền riêng tư", "Privacy", "權𥢆私")) { c ->
+        paragraph(c, tr(
+            "Bàn phím không kết nối mạng và không gửi đi bất cứ thứ gì bạn gõ. " +
+                "Ô mật khẩu luôn gõ tiếng Anh và không học thói quen.",
+            "The keyboard never connects to the network and never sends anything you type. " +
+                "Password fields always use English and nothing is learned from them.",
+            "盤柉空結綏𦁸吧空寄𠫾不據次咦伴𢱗。嗚密口㫻𢱗㗂英吧空學𢟔慣。",
+        ))
+        paragraph(c, tr("Từ điển và dữ liệu học chỉ lưu trong máy, ở thư mục riêng của ứng dụng.", "Dictionaries and learned data stay on this device, in the app's private folder.", "辭典吧與料學只留𥪝𣛠，於書目𥢆𧵑應用。"))
     }
 
-    private fun aboutPage() = settingsPage("Giới thiệu") { c ->
+    private fun aboutPage() = settingsPage(tr("Giới thiệu", "About", "介紹")) { c ->
         val version = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: "?"
-        item(c, "Phiên bản hiện tại", version) {}
-        item(c, "Phông chữ đi kèm", "MiSans L3") {}
+        item(c, tr("Phiên bản hiện tại", "Current version", "番版現在"), version) {}
+        item(c, tr("Phông chữ đi kèm", "Bundled font", "風𡨸𠫾兼"), "MiSans L3") {}
     }
 
     // ---- Tiện ích ----
@@ -386,9 +503,55 @@ class SettingsActivity : Activity() {
         val current = SystemSettings.Secure.getString(contentResolver, SystemSettings.Secure.DEFAULT_INPUT_METHOD)
             ?.startsWith(packageName) == true
         return when {
-            current -> "Bàn phím Hán Nôm đang là bàn phím mặc định"
-            enabled -> "Đã bật. Bước tiếp: chọn Bàn phím Hán Nôm làm bàn phím đang dùng"
-            else -> "Chưa bật. Làm lần lượt 2 bước"
+            current -> tr("Bàn phím Hán Nôm đang là bàn phím mặc định", "Bàn phím Hán Nôm is the default keyboard", "盤柉漢喃當𪜀盤柉默定")
+            enabled -> tr("Đã bật. Bước tiếp: chọn Bàn phím Hán Nôm làm bàn phím đang dùng", "Enabled. Next: select Bàn phím Hán Nôm as the current keyboard", "㐌弼。𨀈接：𫾗盤柉漢喃爫盤柉當用")
+            else -> tr("Chưa bật. Làm lần lượt 2 bước", "Not enabled. Follow the 2 steps", "𣗓弼。爫𨁮𦀎2𨀈")
+        }
+    }
+
+    /**
+     * Hộp thoại thanh kéo như "Âm lượng", "Cường độ rung khi nhấn phím" của Gboard: số đang chọn ở trên, thanh kéo 0 →
+     * [max], nút Mặc định (về [Settings.DEFAULT]), Huỷ, OK. [preview] chạy mỗi lần kéo (phát tiếng / rung thử).
+     */
+    private fun sliderDialog(
+        title: String,
+        max: Int,
+        start: Int,
+        current: Int,
+        label: (Int) -> String,
+        preview: (Int) -> Unit,
+        onOk: (Int) -> Unit,
+    ) {
+        val c = SettingsColors.of(this)
+        var value = current
+        val text = TextView(this).apply {
+            this.text = label(value)
+            gravity = Gravity.CENTER
+            setTextColor(c.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+        }
+        lateinit var slider: SettingsSlider
+        slider = settingsSlider(c, max, start) {
+            value = it
+            text.text = label(it)
+            preview(it)
+        }
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dpi(24), dpi(16), dpi(24), 0)
+            addView(text)
+            addView(slider, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpi(48)).apply { topMargin = dpi(8) })
+        }
+        val dialog = AlertDialog.Builder(this).setTitle(title).setView(body)
+            .setNeutralButton(tr("Mặc định", "Default", "默定"), null)
+            .setNegativeButton(tr("Huỷ", "Cancel", "毀"), null)
+            .setPositiveButton(tr("OK", "OK", "同意")) { _, _ -> onOk(value) }
+            .show()
+        // Mặc định: đưa về mức của hệ thống, chưa lưu tới khi bấm OK (như Gboard).
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+            value = Settings.DEFAULT
+            slider.progress = 0
+            text.text = label(value)
         }
     }
 
@@ -398,7 +561,7 @@ class SettingsActivity : Activity() {
                 onChoose(which)
                 dialog.dismiss()
             }
-            .setNegativeButton("Huỷ", null)
+            .setNegativeButton(tr("Huỷ", "Cancel", "毀"), null)
             .show()
     }
 
@@ -416,45 +579,22 @@ class SettingsActivity : Activity() {
             Handwriting.get(this).exportLearned { text ->
                 runCatching {
                     contentResolver.openOutputStream(uri, "wt")!!.use { it.write(text.toByteArray()) }
-                }.onSuccess { toast("Đã xuất mẫu viết tay") }.onFailure { toast("Không ghi được tệp") }
+                }.onSuccess { toast(tr("Đã xuất mẫu viết tay", "Handwriting samples exported", "㐌出母𢪏𢬣")) }.onFailure { toast(tr("Không ghi được tệp", "Couldn't write the file", "空𥱬得集")) }
             }
             return
         }
-        if (requestCode != REQUEST_FONT || resultCode != RESULT_OK || uri == null) return
-        runCatching {
-            contentResolver.openInputStream(uri)!!.use { input ->
-                settings.fontFile.outputStream().use { input.copyTo(it) }
-            }
-            android.graphics.Typeface.createFromFile(settings.fontFile)
-        }.onSuccess {
-            toast("Đã đặt phông Hán Nôm")
-        }.onFailure {
-            settings.fontFile.delete()
-            toast("Không đọc được tệp phông")
-        }
-        onResume()
-    }
-
-    @Suppress("DEPRECATION")
-    private fun pickFont() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = "*/*"
-        }
-        startActivityForResult(intent, REQUEST_FONT)
     }
 
     private fun confirm(message: String, onYes: () -> Unit) {
         AlertDialog.Builder(this).setMessage(message)
-            .setPositiveButton("Đồng ý") { _, _ -> onYes() }
-            .setNegativeButton("Huỷ", null)
+            .setPositiveButton(tr("Đồng ý", "OK", "同意")) { _, _ -> onYes() }
+            .setNegativeButton(tr("Huỷ", "Cancel", "毀"), null)
             .show()
     }
 
     private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
 
     companion object {
-        private const val REQUEST_FONT = 1
         private const val REQUEST_ADD = 2
         private const val REQUEST_EXPORT_HANDWRITING = 3
         /** Mở từ nút cài đặt của bàn phím khi đang ở trong ứng dụng: bỏ màn khởi động. */

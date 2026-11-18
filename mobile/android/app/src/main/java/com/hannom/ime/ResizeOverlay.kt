@@ -179,18 +179,19 @@ class ResizeOverlay(context: Context, private val listener: Listener) : FrameLay
     }
 
     override fun onDraw(canvas: Canvas) {
-        // Phủ mờ cả thanh gợi ý và bàn phím (như Gboard làm nhạt phím khi chỉnh kích thước), cả cột nút một tay; khung
-        // tràn ra ngoài bàn phím thì phủ thêm phần trong khung.
+        // Phủ mờ cả thanh gợi ý và bàn phím (như Gboard làm nhạt phím khi chỉnh kích thước), cả cột nút một tay.
         paint.style = Paint.Style.FILL
         paint.color = theme.background and 0x00FFFFFF or 0xB0000000.toInt()
         canvas.drawRect(0f, dimTop, width.toFloat(), dimBottom, paint)
+        // Khung kéo lên trên bàn phím: phủ đen 80% cả bề ngang, từ đỉnh khung xuống tới bàn phím (đè lên ứng dụng), như
+        // Gboard (đo 2026-11-18 lúc đang kéo ✥ lên: điểm ảnh ứng dụng còn 20%, phía trên đỉnh khung giữ nguyên).
+        if (box.top < dimTop) {
+            paint.color = 0xCC000000.toInt()
+            canvas.drawRect(0f, box.top, width.toFloat(), dimTop, paint)
+        }
         val stroke = context.dp(2f)
         val r = context.dp(24f)
         frame.set(box.left + stroke, box.top + stroke, box.right - stroke, box.bottom - stroke)
-        canvas.save()
-        canvas.clipOutRect(0f, dimTop, width.toFloat(), dimBottom)
-        canvas.drawRoundRect(frame, r, r, paint)
-        canvas.restore()
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = stroke
         // Kéo cạnh / góc chạm giới hạn thì tô đỏ cả khung (kéo ✥ thì chỉ cạnh phía dời tới).

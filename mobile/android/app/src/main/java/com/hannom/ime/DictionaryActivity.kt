@@ -46,6 +46,8 @@ import java.util.Locale
  * mục Xếp A → Z / Z → A).
  */
 abstract class DictPage<T> : Activity() {
+    /** [AppText.version] lúc dựng trang. */
+    private val textVersion = AppText.version
     protected lateinit var colors: SettingsColors
     private lateinit var root: FrameLayout
     private lateinit var bar: LinearLayout
@@ -85,7 +87,8 @@ abstract class DictPage<T> : Activity() {
     protected abstract fun delete(items: List<T>, all: Boolean)
     /** Nút + (thêm); `null` thì không có. */
     protected open val onAdd: (() -> Unit)? = null
-    protected open val addDescription = "Thêm"
+    /** Tính mỗi lần đọc: lúc dựng activity chưa có Context để đọc ngôn ngữ ứng dụng. */
+    protected open val addDescription get() = tr("Thêm", "Add", "添")
     protected open fun selectable(item: T) = true
     /** ⋮ có mục Xoá không. */
     protected open val deletable = true
@@ -142,17 +145,17 @@ abstract class DictPage<T> : Activity() {
                 }
             })
         }
-        clearButton = barIcon(R.drawable.ic_close, "Xoá ô tìm") { search.setText("") }.apply { visibility = View.GONE }
-        searchButton = barIcon(R.drawable.ic_search, "Tìm") { openSearch() }
+        clearButton = barIcon(R.drawable.ic_close, tr("Xoá ô tìm", "Clear search", "𫨮嗚尋")) { search.setText("") }.apply { visibility = View.GONE }
+        searchButton = barIcon(R.drawable.ic_search, tr("Tìm", "Search", "尋")) { openSearch() }
         addButton = onAdd?.let { add -> barIcon(R.drawable.ic_add, addDescription) { add() } }
         lateinit var more: View
-        more = barIcon(R.drawable.ic_more_vert, "Tuỳ chọn khác") { showMenu(more) }
+        more = barIcon(R.drawable.ic_more_vert, tr("Tuỳ chọn khác", "More options", "隨𫾗恪")) { showMenu(more) }
         bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(colors.bar)
             minimumHeight = dpi(64)
-            backButton = barIcon(R.drawable.ic_arrow_back, "Quay lại") {
+            backButton = barIcon(R.drawable.ic_arrow_back, tr("Quay lại", "Back", "𫏓徠")) {
                 if (selected.isNotEmpty() && search.visibility != View.VISIBLE) clearSelection() else goBack()
             }
             addView(backButton, LinearLayout.LayoutParams(dpi(56), dpi(56)).apply { marginStart = dpi(4) })
@@ -178,7 +181,7 @@ abstract class DictPage<T> : Activity() {
             }
         }
         val empty = TextView(this).apply {
-            text = "Không có mục nào"
+            text = tr("Không có mục nào", "No entries", "空𣎏目𱜢")
             setTextColor(colors.summary)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             gravity = Gravity.CENTER
@@ -234,6 +237,11 @@ abstract class DictPage<T> : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // Đã đổi ngôn ngữ ứng dụng: dựng lại trang bằng ngôn ngữ mới.
+        if (textVersion != AppText.version) {
+            recreate()
+            return
+        }
         reload()
     }
 
@@ -307,14 +315,14 @@ abstract class DictPage<T> : Activity() {
         // Mục đã chọn có thể không nằm trong kết quả tìm đang hiện: lấy từ cả danh sách.
         val chosen = if (selected.isEmpty()) emptyList() else load("").filter { keyOf(it) in selected }
         val actions = extraActions() + listOf(
-            (if (descending) "Xếp A → Z" else "Xếp Z → A") to {
+            (if (descending) tr("Xếp A → Z", "Sort A → Z", "疊A → Z") else tr("Xếp Z → A", "Sort Z → A", "疊Z → A")) to {
                 descending = !descending
                 reload()
                 list.setSelection(0)
             },
         ) + listOfNotNull(
             if (deletable) deleteLabel(chosen.size) to { delete(chosen, chosen.isEmpty()) } else null,
-            if (selected.isNotEmpty()) "Bỏ chọn tất cả" to { clearSelection() } else null,
+            if (selected.isNotEmpty()) tr("Bỏ chọn tất cả", "Deselect all", "𠬃𫾗畢𪥘󠄁") to { clearSelection() } else null,
         )
         actions.forEachIndexed { i, (label, _) -> menu.menu.add(0, i, i, hanNomText(label)) }
         menu.setOnMenuItemClickListener { actions[it.itemId].second(); true }
@@ -334,17 +342,18 @@ abstract class DictPage<T> : Activity() {
     }
 
     private fun updateTitle() {
-        titleView.text = if (selected.isNotEmpty()) "Đã chọn ${selected.size}" else hanNomText(pageTitle())
+        titleView.text = if (selected.isNotEmpty()) tr("Đã chọn ${selected.size}", "${selected.size} selected", "㐌𫾗${selected.size}") else hanNomText(pageTitle())
         // Đang tìm thì tiêu đề bị ô tìm che: số mục đã chọn hiện ở chữ gợi ý của ô tìm.
         // Có mục đã chọn (không đang tìm): nút đầu thanh thành ✕ bỏ chọn.
         val cancel = selected.isNotEmpty() && search.visibility != View.VISIBLE
         backButton.setImageResource(if (cancel) R.drawable.ic_close else R.drawable.ic_arrow_back)
-        backButton.contentDescription = if (cancel) "Bỏ chọn" else "Quay lại"
-        search.hint = if (selected.isNotEmpty()) "Đã chọn ${selected.size} · $searchHint" else searchHint
+        backButton.contentDescription = if (cancel) tr("Bỏ chọn", "Deselect", "𠬃𫾗") else tr("Quay lại", "Back", "𫏓徠")
+        search.hint = if (selected.isNotEmpty()) tr("Đã chọn ${selected.size} · $searchHint", "${selected.size} selected · $searchHint", "㐌𫾗${selected.size}·${searchHint}") else searchHint
         val query = search.text.toString()
         subtitle.text = when {
-            query.isNotBlank() -> "${number(shown.size)} kết quả"
-            else -> summary(shown.size) + " · " + if (descending) "Z → A" else "A → Z"
+            query.isNotBlank() -> tr("${number(shown.size)} kết quả", "${number(shown.size)} results", "${number(shown.size)}結果")
+            // Dấu cách không ngắt dòng: "A → Z" không bị tách sang hai dòng khi dòng phụ dài (người dùng báo 2026-11-19).
+            else -> summary(shown.size) + " · " + if (descending) "Z → A" else "A → Z"
         }
     }
 
@@ -355,7 +364,7 @@ abstract class DictPage<T> : Activity() {
         AlertDialog.Builder(this)
             .setMessage(hanNomText(message))
             .setPositiveButton(button) { _, _ -> action() }
-            .setNegativeButton("Huỷ", null)
+            .setNegativeButton(tr("Huỷ", "Cancel", "毀"), null)
             .show()
     }
 
@@ -411,8 +420,11 @@ abstract class DictPage<T> : Activity() {
         addView(content)
     }
 
-    /** Hộp thoại nhập tên (từ điển mới, đổi tên). */
-    protected fun askName(title: String, initial: String, onDone: (String) -> Unit) {
+    /**
+     * Hộp thoại nhập tên (từ điển mới, đổi tên). Tên trùng một từ điển khác ([taken], không phân biệt hoa thường) thì
+     * báo ngay dưới ô nhập và giữ hộp thoại mở (người dùng muốn 2026-11-18).
+     */
+    protected fun askName(title: String, initial: String, taken: (String) -> Boolean, onDone: (String) -> Unit) {
         val field = EditText(this).apply {
             setText(initial)
             setTextColor(colors.text)
@@ -425,16 +437,45 @@ abstract class DictPage<T> : Activity() {
                 intArrayOf(colors.accent, colors.summary),
             )
         }
-        val box = FrameLayout(this).apply {
+        val error = TextView(this).apply {
+            setTextColor(android.graphics.Color.parseColor("#D93025"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            visibility = View.GONE
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(dpi(20), dpi(8), dpi(20), 0)
             addView(field)
+            addView(error)
         }
+        fun check(name: String): Boolean {
+            val dup = name.isNotEmpty() && taken(name)
+            error.text = hanNomText(tr("Đã có từ điển tên $name", "A dictionary named $name already exists", "㐌𣎏辭典𠸜${name}"))
+            error.visibility = if (dup) View.VISIBLE else View.GONE
+            return !dup
+        }
+        field.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable) {
+                check(s.toString().trim())
+            }
+        })
         val dialog = AlertDialog.Builder(this)
             .setTitle(title)
             .setView(box)
-            .setPositiveButton("Lưu") { _, _ -> field.text.toString().trim().takeIf { it.isNotEmpty() }?.let(onDone) }
-            .setNegativeButton("Huỷ", null)
+            .setPositiveButton(tr("Lưu", "Save", "留"), null)
+            .setNegativeButton(tr("Huỷ", "Cancel", "毀"), null)
             .create()
+        // Bấm Lưu khi tên trùng: không đóng hộp thoại.
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val name = field.text.toString().trim()
+                if (name.isEmpty() || !check(name)) return@setOnClickListener
+                dialog.dismiss()
+                onDone(name)
+            }
+        }
         dialog.window?.setDimAmount(0.2f)
         showAboveKeyboard(dialog)
         field.requestFocus()
@@ -534,8 +575,8 @@ abstract class DictPage<T> : Activity() {
  * ứng dụng khác: hỏi nhập vào từ điển Hán Nôm nào.
  */
 class DictionaryActivity : DictPage<Lang>() {
-    override fun pageTitle() = "Từ điển"
-    override val searchHint = "Tìm ngôn ngữ"
+    override fun pageTitle() = tr("Từ điển", "Dictionary", "辭典")
+    override val searchHint get() = tr("Tìm ngôn ngữ", "Search languages", "尋言語")
 
     override fun finish() {
         if (!finishKeyboardTask()) super.finish()
@@ -554,16 +595,16 @@ class DictionaryActivity : DictPage<Lang>() {
 
     override fun load(query: String): List<Lang> {
         val q = WordDict.fold(query.trim())
-        return Lang.entries.filter { q.isEmpty() || WordDict.fold(it.title).contains(q) }.sortedBy { WordDict.fold(it.title) }
+        return Lang.entries.filter { q.isEmpty() || WordDict.fold(it.titleIn(this)).contains(q) }.sortedBy { WordDict.fold(it.titleIn(this)) }
     }
 
     override fun keyOf(item: Lang) = item.code
 
     override fun bind(holder: RowHolder, item: Lang) {
         val dicts = Dictionaries.list(this, item)
-        holder.text.text = item.title
+        holder.text.text = item.titleIn(this)
         holder.reading.text = ""
-        holder.codes.text = "${dicts.size} từ điển · ${dicts.count { it.enabled }} đang bật"
+        holder.codes.text = tr("${dicts.size} từ điển · ${dicts.count { it.enabled }} đang bật", "${dicts.size} dictionaries · ${dicts.count { it.enabled }} on", "${dicts.size}辭典·${dicts.count { it.enabled }}當弼")
         holder.side.text = ""
         holder.toggle.visibility = View.GONE
     }
@@ -572,7 +613,7 @@ class DictionaryActivity : DictPage<Lang>() {
         startActivity(Intent(this, DictListActivity::class.java).putExtra(EXTRA_LANG, item.code))
     }
 
-    override fun summary(count: Int) = "$count ngôn ngữ"
+    override fun summary(count: Int) = tr("$count ngôn ngữ", "$count languages", "${count}言語")
 
     /**
      * Trang danh sách ngôn ngữ không có giữ để chọn, ⋮ cũng không có mục xoá từ điển cá nhân (người dùng muốn
@@ -581,16 +622,21 @@ class DictionaryActivity : DictPage<Lang>() {
     override fun selectable(item: Lang) = false
     override val deletable = false
 
-    override fun deleteLabel(count: Int) = "Xoá tất cả từ điển cá nhân"
+    override fun deleteLabel(count: Int) = tr("Xoá tất cả từ điển cá nhân", "Delete all personal dictionaries", "𫨮畢𪥘󠄁辭典個人")
 
     override fun delete(items: List<Lang>, all: Boolean) {
         val langs = if (all) Lang.entries else items
         val personal = langs.sumOf { l -> Dictionaries.list(this, l).count { !it.isDefault } }
-        if (personal == 0) return toast("Không có từ điển cá nhân nào")
+        if (personal == 0) return toast(tr("Không có từ điển cá nhân nào", "No personal dictionaries", "空𣎏辭典個人𱜢"))
         confirm(
-            "Xoá $personal từ điển cá nhân của ${langs.joinToString(", ") { it.title }}? Từ điển mặc định vẫn giữ. " +
-                "Nên xuất tệp để lưu trước.",
-            "Xoá",
+            tr(
+                "Xoá $personal từ điển cá nhân của ${langs.joinToString(", ") { it.titleIn(this) }}? Từ điển mặc định vẫn " +
+                    "giữ. Nên xuất tệp để lưu trước.",
+                "Delete $personal personal dictionaries of ${langs.joinToString(", ") { it.titleIn(this) }}? The default " +
+                    "dictionaries are kept. Export first to keep a copy.",
+                "𫨮${personal}辭典個人𧵑${langs.joinToString(", ") { it.titleIn(this) }}？辭典默定吻𡨺。𢧚出集抵留𠓀。",
+            ),
+            tr("Xoá", "Delete", "𫨮"),
         ) {
             langs.forEach { l -> Dictionaries.delete(this, l, Dictionaries.list(this, l).filter { !it.isDefault }.map { it.id }) }
             clearSelection()
@@ -612,14 +658,14 @@ class DictionaryActivity : DictPage<Lang>() {
         if (files.isEmpty()) return
         // Tệp chia sẻ là từ điển Hán Nôm (`chữ;âm;số`): chọn từ điển nhận, hay tạo từ điển cá nhân mới.
         val dicts = Dictionaries.list(this, Lang.NOM)
-        val labels = dicts.map { hanNomText(it.name) } + "Từ điển cá nhân mới"
+        val labels = dicts.map { hanNomText(it.name) } + tr("Từ điển cá nhân mới", "New personal dictionary", "辭典個人𬔫")
         AlertDialog.Builder(this)
-            .setTitle("Nhập vào từ điển Hán Nôm nào?")
+            .setTitle(tr("Nhập vào từ điển Hán Nôm nào?", "Import into which Han Nom dictionary?"))
             .setItems(labels.toTypedArray()) { _, which ->
                 val target = dicts.getOrNull(which) ?: Dictionaries.add(this, Lang.NOM, Dictionaries.nextPersonalName(this, Lang.NOM))
                 previewImport(Dictionaries.store(this, target), files) { reload() }
             }
-            .setNegativeButton("Huỷ", null)
+            .setNegativeButton(tr("Huỷ", "Cancel", "毀"), null)
             .show()
     }
 }
@@ -659,12 +705,16 @@ class DictListActivity : DictPage<DictInfo>() {
         val counting = HashSet<String>()
     }
 
-    override fun pageTitle() = lang.title
-    override val searchHint = "Tìm từ điển"
-    override val addDescription = "Thêm từ điển"
+    override fun pageTitle() = lang.titleIn(this)
+    override val searchHint get() = tr("Tìm từ điển", "Search dictionaries", "尋辭典")
+    override val addDescription get() = tr("Thêm từ điển", "Add dictionary", "添辭典")
 
     override val onAdd: () -> Unit = {
-        askName("Từ điển mới", Dictionaries.nextPersonalName(this, lang)) { name ->
+        askName(
+            tr("Từ điển mới", "New dictionary", "辭典𬔫"),
+            Dictionaries.nextPersonalName(this, lang),
+            { name -> Dictionaries.list(this, lang).any { it.name.equals(name, ignoreCase = true) } },
+        ) { name ->
             val info = Dictionaries.add(this, lang, name)
             reload()
             openDict(info)
@@ -683,7 +733,7 @@ class DictListActivity : DictPage<DictInfo>() {
     override fun bind(holder: RowHolder, item: DictInfo) {
         holder.text.text = hanNomText(item.name)
         holder.reading.text = ""
-        holder.codes.text = countOf(item)?.let { "${number(it)} mục" } ?: "Đang đếm số mục…"
+        holder.codes.text = countOf(item)?.let { tr("${number(it)} mục", "${number(it)} entries", "${number(it)}目") } ?: tr("Đang đếm số mục…", "Counting entries…", "當點數目")
         holder.side.text = ""
         holder.toggle.visibility = View.VISIBLE
         holder.toggle.isChecked = item.enabled
@@ -701,23 +751,27 @@ class DictListActivity : DictPage<DictInfo>() {
 
     override fun summary(count: Int): String {
         val on = shown.count { it.enabled }
-        return "$count từ điển · $on đang bật"
+        return tr("$count từ điển · $on đang bật", "$count dictionaries · $on on", "${count}辭典·${on}當弼")
     }
 
     override fun selectable(item: DictInfo) = !item.isDefault
 
     override fun pinned(item: DictInfo) = item.isDefault
 
-    override fun onUnselectable(item: DictInfo) = toast("Không xoá được ${item.name}")
+    override fun onUnselectable(item: DictInfo) = toast(tr("Không xoá được ${item.name}", "Can't delete ${item.name}", "空𫨮得${item.name}"))
 
-    override fun deleteLabel(count: Int) = if (count > 0) "Xoá $count từ điển đã chọn" else "Xoá tất cả từ điển cá nhân"
+    override fun deleteLabel(count: Int) = if (count > 0) tr("Xoá $count từ điển đã chọn", "Delete $count selected dictionaries", "𫨮${count}辭典㐌𫾗") else tr("Xoá tất cả từ điển cá nhân", "Delete all personal dictionaries", "𫨮畢𪥘󠄁辭典個人")
 
     override fun delete(items: List<DictInfo>, all: Boolean) {
         val gone = (if (all) Dictionaries.list(this, lang) else items).filter { !it.isDefault }
-        if (gone.isEmpty()) return toast("Không có từ điển cá nhân nào")
+        if (gone.isEmpty()) return toast(tr("Không có từ điển cá nhân nào", "No personal dictionaries", "空𣎏辭典個人𱜢"))
         confirm(
-            "Xoá ${gone.joinToString(", ") { it.name }}? ${lang.defaultName} vẫn giữ. Nên xuất tệp để lưu trước.",
-            "Xoá",
+            tr(
+                "Xoá ${gone.joinToString(", ") { it.name }}? ${lang.defaultName} vẫn giữ. Nên xuất tệp để lưu trước.",
+                "Delete ${gone.joinToString(", ") { it.name }}? ${lang.defaultName} is kept. Export first to keep a copy.",
+                "𫨮${gone.joinToString(", ") { it.name }}？${lang.defaultName}吻𡨺。𢧚出集抵留𠓀。",
+            ),
+            tr("Xoá", "Delete", "𫨮"),
         ) {
             Dictionaries.delete(this, lang, gone.map { it.id })
             clearSelection()
@@ -739,7 +793,7 @@ class DictWordsActivity : DictPage<DictRow>() {
     private val store by lazy { Dictionaries.store(this, info) }
 
     override fun pageTitle(): CharSequence = info.name
-    override val searchHint get() = if (lang == Lang.NOM) "Tìm chữ, âm đọc hoặc mã U" else "Tìm từ"
+    override val searchHint get() = if (lang == Lang.NOM) tr("Tìm chữ, âm đọc hoặc mã U", "Search character, reading or Unicode", "尋𡨸，音讀或碼U") else tr("Tìm từ", "Search words", "尋詞")
     override val onAdd: () -> Unit = { openEditor(null) }
 
     override fun load(query: String) = store.rows(query)
@@ -753,37 +807,42 @@ class DictWordsActivity : DictPage<DictRow>() {
         holder.text.text = hanNomText(item.text)
         holder.reading.text = item.reading
         holder.codes.text = if (store.hasReading) item.codes else ""
-        holder.side.text = "phổ biến ${item.freq}"
+        holder.side.text = tr("phổ biến ${item.freq}", "frequency ${item.freq}", "譜遍${item.freq}")
         holder.toggle.visibility = View.GONE
     }
 
     override fun open(item: DictRow) = openEditor(item)
 
-    override fun summary(count: Int) = "${number(count)} mục"
+    override fun summary(count: Int) = tr("${number(count)} mục", "${number(count)} entries", "${number(count)}目")
 
     override fun extraActions(): List<Pair<String, () -> Unit>> = listOfNotNull(
-        "Nhập tệp" to ::pickImport,
-        "Xuất tệp" to ::pickExport,
-        if (info.isDefault) "Nhập lại bản mặc định" to ::builtinDialog else null,
-        if (!info.isDefault) "Đổi tên" to {
-            askName("Đổi tên", info.name) { name ->
+        tr("Nhập tệp", "Import file", "入集") to ::pickImport,
+        tr("Xuất tệp", "Export file", "出集") to ::pickExport,
+        if (info.isDefault) tr("Nhập lại bản mặc định", "Restore default", "入徠版默定") to ::builtinDialog else null,
+        if (!info.isDefault) tr("Đổi tên", "Rename", "𢷮𠸜") to {
+            val current = info
+            askName(
+                tr("Đổi tên", "Rename", "𢷮𠸜"),
+                current.name,
+                { name -> Dictionaries.list(this, lang).any { it.id != current.id && it.name.equals(name, ignoreCase = true) } },
+            ) { name ->
                 Dictionaries.update(this, info.copy(name = name))
                 reload()
             }
         } else null,
-        "Định dạng tệp" to ::formatHelp,
+        tr("Định dạng tệp", "File format", "定樣集") to ::formatHelp,
     )
 
-    override fun deleteLabel(count: Int) = if (count > 0) "Xoá $count mục đã chọn" else "Xoá hết"
+    override fun deleteLabel(count: Int) = if (count > 0) tr("Xoá $count mục đã chọn", "Delete $count selected entries", "𫨮${count}目㐌𫾗") else tr("Xoá hết", "Delete all", "𫨮歇")
 
     override fun delete(items: List<DictRow>, all: Boolean) {
         if (all) {
-            confirm("Xoá toàn bộ ${info.name}? Nên xuất tệp để lưu trước.", "Xoá hết") {
+            confirm(tr("Xoá toàn bộ ${info.name}? Nên xuất tệp để lưu trước.", "Delete everything in ${info.name}? Export first to keep a copy.", "𫨮全部${info.name}？𢧚出集抵留𠓀"), tr("Xoá hết", "Delete all", "𫨮歇")) {
                 store.clear()
                 reload()
             }
         } else {
-            confirm("Xoá ${items.size} mục đã chọn?", "Xoá") {
+            confirm(tr("Xoá ${items.size} mục đã chọn?", "Delete ${items.size} selected entries?", "𫨮${items.size}目㐌𫾗"), tr("Xoá", "Delete", "𫨮")) {
                 store.remove(items)
                 clearSelection()
                 reload()
@@ -793,12 +852,21 @@ class DictWordsActivity : DictPage<DictRow>() {
 
     private fun formatHelp() {
         val message = if (store.hasReading) {
-            "Tệp nhập / xuất là văn bản UTF-8, mỗi dòng: chữ;âm đọc;độ phổ biến\n\n" +
-                "固;cố;3\n\nMỗi âm một dòng. Độ phổ biến tăng mỗi khi chọn chữ khi gõ."
+            tr(
+                "Tệp nhập / xuất là văn bản UTF-8, mỗi dòng: chữ;âm đọc;độ phổ biến\n\n" +
+                    "固;cố;3\n\nMỗi âm một dòng. Độ phổ biến tăng mỗi khi chọn chữ khi gõ.",
+                "Import / export files are UTF-8 text, one line each: character;reading;frequency\n\n" +
+                    "固;cố;3\n\nOne reading per line. Frequency goes up each time you pick the character while typing.",
+                "集 入／出 𪜀文本UTF-8，每𣳔：𡨸；音讀；度譜遍\n\n固;cố;3\n\n每音𠬠𣳔。度譜遍增每欺𫾗𡨸欺𢱗。",
+            )
         } else {
-            "Tệp nhập / xuất là văn bản UTF-8, mỗi dòng: từ;độ phổ biến\n\nchữ nôm;120\nhello;35"
+            tr(
+                "Tệp nhập / xuất là văn bản UTF-8, mỗi dòng: từ;độ phổ biến\n\nchữ nôm;120\nhello;35",
+                "Import / export files are UTF-8 text, one line each: word;frequency\n\nchữ nôm;120\nhello;35",
+                "集 入／出 𪜀文本UTF-8，每𣳔：詞；度譜遍\n\nchữ nôm;120\nhello;35",
+            )
         }
-        AlertDialog.Builder(this).setTitle("Định dạng tệp").setMessage(hanNomText(message)).setPositiveButton("OK", null).show()
+        AlertDialog.Builder(this).setTitle(tr("Định dạng tệp", "File format", "定樣集")).setMessage(hanNomText(message)).setPositiveButton(tr("OK", "OK", "同意"), null).show()
     }
 
     /**
@@ -825,9 +893,9 @@ class DictWordsActivity : DictPage<DictRow>() {
         }
         val nom = store.hasReading
         val textHint = when {
-            !nom -> if (row == null) "Nhập từ" else "Từ"
-            row == null -> "Nhập chữ hoặc cụm từ vd. 喃"
-            else -> "Chữ"
+            !nom -> if (row == null) tr("Nhập từ", "Enter word", "入詞") else tr("Từ", "Word", "詞")
+            row == null -> tr("Nhập chữ hoặc cụm từ vd. 喃", "Enter a character or phrase, e.g. 喃", "入𡨸或椹詞，譬喻：喃")
+            else -> tr("Chữ", "Character", "𡨸")
         }
         val textField = field(textHint, 24f).apply {
             useHanNomFont()
@@ -849,7 +917,7 @@ class DictWordsActivity : DictPage<DictRow>() {
                 }
             }
         }
-        val readingField = field(if (row == null) "vd. nôm, nam" else "Âm đọc", 18f).apply {
+        val readingField = field(if (row == null) tr("vd. nôm, nam", "e.g. nôm, nam", "譬喻：nôm，nam") else tr("Âm đọc", "Reading", "音讀"), 18f).apply {
             setText(row?.reading.orEmpty())
         }
         val freqField = field("0", 18f).apply {
@@ -866,24 +934,24 @@ class DictWordsActivity : DictPage<DictRow>() {
             setPadding(dpi(20), dpi(8), dpi(20), 0)
             addView(textField)
             if (nom) {
-                addView(caption("Âm đọc:"))
+                addView(caption(tr("Âm đọc:", "Reading:", "音讀")))
                 addView(readingField)
             }
-            addView(caption(if (nom) "Độ phổ biến (tăng mỗi khi chọn chữ khi gõ):" else "Độ phổ biến:"))
+            addView(caption(if (nom) tr("Độ phổ biến (tăng mỗi khi chọn chữ khi gõ):", "Frequency (goes up each time you pick it while typing):", "度譜遍（增每欺𫾗𡨸欺𢱗）") else tr("Độ phổ biến:", "Frequency:", "度譜遍")))
             addView(freqField)
             addView(error)
         }
 
         val builder = AlertDialog.Builder(this)
-            .setTitle(hanNomText(if (row == null) "Thêm vào ${info.name}" else "Sửa mục"))
+            .setTitle(hanNomText(if (row == null) tr("Thêm vào ${info.name}", "Add to ${info.name}", "添𠓨${info.name}") else tr("Sửa mục", "Edit entry", "𢯢目")))
             .setView(scrollable(form))
-            .setPositiveButton("Lưu", null)
-            .setNegativeButton("Huỷ", null)
+            .setPositiveButton(tr("Lưu", "Save", "留"), null)
+            .setNegativeButton(tr("Huỷ", "Cancel", "毀"), null)
         if (row != null) {
-            builder.setNeutralButton("Xoá") { _, _ ->
+            builder.setNeutralButton(tr("Xoá", "Delete", "𫨮")) { _, _ ->
                 store.remove(listOf(row))
                 reload()
-                toast("Đã xoá ${row.text} ${row.reading}".trim())
+                toast(tr("Đã xoá ${row.text} ${row.reading}", "Deleted ${row.text} ${row.reading}", "㐌𫨮${row.text} ${row.reading}").trim())
             }
         }
         val dialog = builder.create()
@@ -891,14 +959,14 @@ class DictWordsActivity : DictPage<DictRow>() {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val freq = freqField.text.toString().trim().let { if (it.isEmpty()) 0 else it.toIntOrNull() }
                 if (freq == null || freq < 0) {
-                    error.text = "Độ phổ biến phải là số nguyên không âm"
+                    error.text = tr("Độ phổ biến phải là số nguyên không âm", "Frequency must be a non-negative whole number", "度譜遍𬆃𪜀數原空陰")
                     return@setOnClickListener
                 }
                 // Ô bỏ trống: nói theo ô của hộp thoại, không theo định dạng tệp của lõi ("thiếu âm đọc sau dấu ;" — người
                 // dùng thấy không đúng trải nghiệm, 2026-11-18).
                 val blank = when {
-                    textField.text.isBlank() -> if (nom) "Chưa nhập chữ" else "Chưa nhập từ"
-                    nom && readingField.text.isBlank() -> "Chưa nhập âm đọc"
+                    textField.text.isBlank() -> if (nom) tr("Chưa nhập chữ", "No character entered", "𣗓入𡨸") else tr("Chưa nhập từ", "No word entered", "𣗓入詞")
+                    nom && readingField.text.isBlank() -> tr("Chưa nhập âm đọc", "No reading entered", "𣗓入音讀")
                     else -> null
                 }
                 if (blank != null) {
@@ -911,7 +979,7 @@ class DictWordsActivity : DictPage<DictRow>() {
                     dialog.dismiss()
                     reload()
                 } else {
-                    error.text = hanNomText(message)
+                    error.text = hanNomText(dictMessage(message))
                 }
             }
         }
@@ -956,7 +1024,7 @@ class DictWordsActivity : DictPage<DictRow>() {
             REQUEST_EXPORT -> data.data?.let { uri ->
                 runCatching {
                     contentResolver.openOutputStream(uri, "wt")!!.use { it.write(store.exportText().toByteArray()) }
-                }.onSuccess { toast("Đã xuất ${info.name}") }.onFailure { toast("Không ghi được tệp") }
+                }.onSuccess { toast(tr("Đã xuất ${info.name}", "Exported ${info.name}", "㐌出${info.name}")) }.onFailure { toast(tr("Không ghi được tệp", "Couldn't write the file", "空𥱬得集")) }
             }
         }
     }
@@ -964,21 +1032,27 @@ class DictWordsActivity : DictPage<DictRow>() {
     /** Nhập lại bản mặc định đóng gói sẵn: gộp vào (giữ chỗ đã sửa) hoặc thay toàn bộ. */
     private fun builtinDialog() {
         AlertDialog.Builder(this)
-            .setTitle("Nhập lại bản mặc định")
+            .setTitle(tr("Nhập lại bản mặc định", "Restore default", "入徠版默定"))
             .setMessage(
-                "Gộp: thêm lại các mục mặc định còn thiếu, giữ nguyên chỗ đã sửa và thêm.\n\n" +
-                    "Thay toàn bộ: từ điển trở về như mặc định, mất mọi chỗ đã sửa và thêm. Nên xuất tệp để lưu trước."
+                tr(
+                    "Gộp: thêm lại các mục mặc định còn thiếu, giữ nguyên chỗ đã sửa và thêm.\n\n" +
+                        "Thay toàn bộ: từ điển trở về như mặc định, mất mọi chỗ đã sửa và thêm. Nên xuất tệp để lưu trước.",
+                    "Merge: add back missing default entries, keeping your edits and additions.\n\n" +
+                        "Replace all: the dictionary goes back to the default, losing all edits and additions. " +
+                        "Export first to keep a copy.",
+                    "𠄦：添徠各目默定𫲳少，𡨺原𡊲㐌𢯢吧添。\n\n𠊝全部：辭典𠭤𧗱如默定，𬇮每𡊲㐌𢯢吧添。𢧚出集抵留𠓀。",
+                )
             )
-            .setPositiveButton("Gộp") { _, _ ->
-                toast("Đã thêm ${store.mergeBuiltin().added} mục")
+            .setPositiveButton(tr("Gộp", "Merge", "𠄦")) { _, _ ->
+                toast(store.mergeBuiltin().added.let { tr("Đã thêm $it mục", "Added $it entries", "㐌添${it}目") })
                 reload()
             }
-            .setNeutralButton("Thay toàn bộ") { _, _ ->
+            .setNeutralButton(tr("Thay toàn bộ", "Replace all", "𠊝全部")) { _, _ ->
                 store.resetToBuiltin()
-                toast("Đã khôi phục bản mặc định")
+                toast(tr("Đã khôi phục bản mặc định", "Default restored", "㐌恢復版默定"))
                 reload()
             }
-            .setNegativeButton("Huỷ", null)
+            .setNegativeButton(tr("Huỷ", "Cancel", "毀"), null)
             .show()
     }
 
@@ -995,7 +1069,7 @@ private fun Activity.readFiles(uris: List<Uri>): List<Pair<String, String>> {
             displayName(uri) to contentResolver.openInputStream(uri)!!.use { it.readBytes().toString(Charsets.UTF_8) }
         }.getOrNull()
     }
-    if (files.size < uris.size) Toast.makeText(this, "Không đọc được ${uris.size - files.size} tệp", Toast.LENGTH_SHORT).show()
+    if (files.size < uris.size) Toast.makeText(this, tr("Không đọc được ${uris.size - files.size} tệp", "Couldn't read ${uris.size - files.size} files", "空讀得${uris.size - files.size}集"), Toast.LENGTH_SHORT).show()
     return files
 }
 
@@ -1017,31 +1091,36 @@ private fun Activity.previewImport(store: DictStore, files: List<Pair<String, St
         files.zip(reports).forEachIndexed { i, (file, report) ->
             if (i > 0) append("\n\n")
             if (files.size > 1) append(file.first).append(":\n")
-            append("Sẽ thêm ${report.added} mục, bỏ qua ${report.duplicates} mục trùng.")
+            append(tr("Sẽ thêm ${report.added} mục, bỏ qua ${report.duplicates} mục trùng.", "Will add ${report.added} entries, skip ${report.duplicates} duplicates.", "𫪣添${report.added}目，𠬃過${report.duplicates}目重"))
             if (report.errors.isNotEmpty()) {
-                append("\n${report.errors.size} dòng lỗi (sẽ bỏ qua):\n")
-                report.errors.take(50).forEach { append("• ").append(it).append('\n') }
+                append(tr("\n${report.errors.size} dòng lỗi (sẽ bỏ qua):\n", "\n${report.errors.size} bad lines (will be skipped):\n", "\n${report.errors.size}𣳔𥓹（𫪣𠬃過）：\n"))
+                report.errors.take(50).forEach { append("• ").append(dictMessage(it)).append('\n') }
                 if (report.errors.size > 50) append("…")
             }
         }
     }
     val toast = { text: String -> Toast.makeText(this, text, Toast.LENGTH_SHORT).show() }
     AlertDialog.Builder(this)
-        .setTitle(if (files.size > 1) "Nhập ${files.size} tệp" else "Nhập tệp")
+        .setTitle(if (files.size > 1) tr("Nhập ${files.size} tệp", "Import ${files.size} files", "入${files.size}集") else tr("Nhập tệp", "Import file", "入集"))
         .setMessage(
             hanNomText(
-                "$message\n\nGộp: thêm các mục mới vào từ điển này, mục đã có giữ nguyên độ phổ biến.\n" +
-                    "Thay toàn bộ: từ điển chỉ còn các mục của tệp nhập. Nên xuất tệp để lưu trước."
+                "$message\n\n" + tr(
+                    "Gộp: thêm các mục mới vào từ điển này, mục đã có giữ nguyên độ phổ biến.\n" +
+                        "Thay toàn bộ: từ điển chỉ còn các mục của tệp nhập. Nên xuất tệp để lưu trước.",
+                    "Merge: add the new entries to this dictionary; existing entries keep their frequency.\n" +
+                        "Replace all: the dictionary keeps only the imported entries. Export first to keep a copy.",
+                    "𠄦：添各目𬔫𠓨辭典呢，目㐌𣎏𡨺原度譜遍。\n𠊝全部：辭典只𫲳各目𧵑集入。𢧚出集抵留𠓀。",
+                )
             )
         )
-        .setPositiveButton("Gộp") { _, _ ->
-            toast("Đã thêm ${store.import(contents).sumOf { it.added }} mục")
+        .setPositiveButton(tr("Gộp", "Merge", "𠄦")) { _, _ ->
+            toast(store.import(contents).sumOf { it.added }.let { tr("Đã thêm $it mục", "Added $it entries", "㐌添${it}目") })
             done()
         }
-        .setNeutralButton("Thay toàn bộ") { _, _ ->
-            toast("Từ điển giờ có ${store.replaceWith(contents).sumOf { it.added }} mục")
+        .setNeutralButton(tr("Thay toàn bộ", "Replace all", "𠊝全部")) { _, _ ->
+            toast(store.replaceWith(contents).sumOf { it.added }.let { tr("Từ điển giờ có $it mục", "The dictionary now has $it entries", "辭典𣇞𣎏${it}目") })
             done()
         }
-        .setNegativeButton("Huỷ", null)
+        .setNegativeButton(tr("Huỷ", "Cancel", "毀"), null)
         .show()
 }

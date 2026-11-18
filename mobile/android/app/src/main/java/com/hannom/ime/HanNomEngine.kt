@@ -21,6 +21,8 @@ data class Candidate(
     val literal: Boolean = false,
     /** Cả cụm Latin (nhiều chữ): không lên thanh gợi ý, đứng ô đầu của bảng thả (người dùng muốn 2026-11-18). */
     val panelFirst: Boolean = false,
+    /** Độ phổ biến trong từ điển (0 nếu không phải một mục từ điển, như câu ghép), để xếp thanh gợi ý. */
+    val freq: Int = 0,
 )
 
 /** Một cặp chữ – âm trong từ điển và độ phổ biến của nó. */
@@ -212,7 +214,8 @@ class HanNomEngine private constructor(private val context: Context) {
         records(raw).mapNotNull { f ->
             if (f.size >= 3) {
                 val breaks = f.getOrNull(4).orEmpty().split(',').mapNotNull { it.toIntOrNull() }
-                Candidate(f[0], f[1], f[2].toIntOrNull() ?: 0, f.getOrNull(3) == "1", breaks, f.getOrNull(5) == "1")
+                Candidate(f[0], f[1], f[2].toIntOrNull() ?: 0, f.getOrNull(3) == "1", breaks, f.getOrNull(5) == "1",
+                    freq = f.getOrNull(6)?.toIntOrNull() ?: 0)
             } else null
         }
 

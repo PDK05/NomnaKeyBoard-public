@@ -31,6 +31,33 @@ class TextEditPanel(context: Context, private val listener: Listener) : LinearLa
         /** [selecting]: đang bật "Chọn" (mũi tên, đầu / cuối dòng kéo vùng chọn). */
         fun onEditAction(action: EditAction, selecting: Boolean)
         fun onKeyFeedback(view: View)
+        /** Nút ← đầu bảng: về bàn phím. */
+        fun onEditClose()
+    }
+
+    /**
+     * Hàng trên cùng chỉ có nút ← về bàn phím: bảng che cả thanh công cụ (người dùng muốn 2026-11-18), cao như hàng đầu
+     * bảng nhớ tạm.
+     */
+    private val back = ImageView(context).apply {
+        setImageResource(R.drawable.ic_arrow_back)
+        scaleType = ImageView.ScaleType.CENTER
+        contentDescription = "Quay lại bàn phím"
+        setOnClickListener { listener.onEditClose() }
+    }
+    /** Tên bảng cạnh nút ←, như tiêu đề bảng nhớ tạm (theo bàn phím đang dùng, [ToolId.label]). */
+    private val title = TextView(context).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+        gravity = Gravity.CENTER_VERTICAL
+        maxLines = 1
+        ellipsize = android.text.TextUtils.TruncateAt.END
+        setPadding(context.dpi(12), 0, 0, 0)
+    }
+    private val header = LinearLayout(context).apply {
+        orientation = HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        addView(back, LayoutParams(context.dpi(48), context.dpi(48)))
+        addView(title, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
     }
 
     var theme = KeyboardTheme.of(context)
@@ -76,7 +103,9 @@ class TextEditPanel(context: Context, private val listener: Listener) : LinearLa
     init {
         orientation = VERTICAL
         val pad = context.dpi(5)
-        setPadding(pad, pad, pad, pad)
+        setPadding(pad, 0, pad, pad)
+        val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        addView(header, LayoutParams(LayoutParams.MATCH_PARENT, context.dpi(if (landscape) ClipboardPanel.HEADER_LANDSCAPE else ClipboardPanel.HEADER)))
         val top = LinearLayout(context).apply {
             orientation = HORIZONTAL
             add(icon(EditAction.LEFT, R.drawable.ic_chevron_left), 1f)
@@ -97,6 +126,11 @@ class TextEditPanel(context: Context, private val listener: Listener) : LinearLa
     /** Màu đổi thì tô lại các nút. */
     fun applyTheme() {
         setBackgroundColor(theme.background)
+        back.setColorFilter(theme.text)
+        title.setTextColor(theme.text)
+        title.text = context.hanNomText(ToolId.TEXT_EDIT.label(style))
+        val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        header.layoutParams?.let { it.height = context.dpi(if (landscape) ClipboardPanel.HEADER_LANDSCAPE else ClipboardPanel.HEADER) }
         for (v in buttons) {
             v.background = keyBackground(theme.key)
             (v as? TextView)?.setTextColor(theme.text)

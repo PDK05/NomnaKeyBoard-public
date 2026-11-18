@@ -365,6 +365,13 @@ pub unsafe extern "system" fn Java_com_hannom_ime_NativeCore_select(
     changed as jboolean
 }
 
+/// Số gốc theo từ điển mặc định `defaults`, phần vượt là phần đã học ([`Dictionary::rebase`]).
+#[no_mangle]
+pub unsafe extern "system" fn Java_com_hannom_ime_NativeCore_rebase(env: *mut JNIEnv, _: jclass, handle: jlong, defaults: jstring) {
+    let defaults = from_java(env, defaults);
+    guard((), || engine(handle).dict.rebase_text(&defaults));
+}
+
 /// Xoá dữ liệu học: độ phổ biến về như từ điển mặc định `defaults`, cặp tự thêm về 0.
 #[no_mangle]
 pub unsafe extern "system" fn Java_com_hannom_ime_NativeCore_clearLearned(

@@ -86,6 +86,16 @@ chữ cho vừa, tới 15sp; vẫn tràn thì gợi ý đầu đứng một mìn
 chữ, chỉ rộng vừa đủ cho chữ khỏi dính; đơn, kép, Latin hiện lẫn được. Nút hỏi thêm từ vào từ điển
 không tính vào số ô (5 cụm 2 chữ vẫn đủ 5 ô), chỉ chiếm thêm bề rộng. Giữa các ô có vạch ngăn mảnh,
 không chạm viền trên dưới.
+- **Chữ Latin** (bàn phím Hán Nôm kiểu Telex; người dùng đặt 2026-11-18): mọi chữ gõ ra đều có lựa chọn giữ nguyên chữ
+  Latin ở **vị trí thứ 2** (ngay sau gợi ý đầu), là chữ của âm đang được trỏ tới: chưa chốt âm thì chữ đầu (`khoong
+  mootj hai` → thanh: 空沒𠄩 · không · …); đã chốt âm thì chữ Hán các âm đã chốt viết liền chữ Latin của chữ kế tiếp
+  (空một). Gõ nhiều chữ thì **cả cụm Latin** (không một hai; đã chốt: 空một hai) không lên thanh mà đứng **ô đầu của
+  bảng thả**. Chữ Latin luôn ở **ô 2 của thanh** (không xuống lưới). Chạm chọn ở cột trái chưa đổi chữ Latin; **chốt
+  âm** rồi thì chữ Latin của âm đó chỉ là **các phần đã chọn**, thay cho cả âm đã gõ: gõ `thooi`, chạm t → vẫn `thôi`;
+  chốt âm ở `t…` → `t` (không phải `tôi`); chốt khi đã chọn tới thanh → đúng âm đó; chốt mà chưa chọn gì → `thôi`
+  (người dùng đổi 2026-11-18, thay quy tắc cũ `trung` chọn ch → chung). Bật 𡨸單
+  cũng có chữ Latin ở vị trí thứ 2. Không còn phân biệt chữ phổ biến / chữ không phải tiếng Việt (`lag`, `alo`,
+  `chunom` như nhau).
 - Nút mũi tên ở cuối dải mở **bảng mở rộng** dạng lưới, chiếm chỗ bàn phím, cuộn dọc; chỉ hiện các
 gợi ý chưa có trên thanh.
 - **Cột chọn nhanh** (bên trái bảng mở rộng) thu hẹp âm tiết đầu từng cấp: phụ âm đầu → nguyên âm → vần →
@@ -414,3 +424,63 @@ hết phím, nên chữ Latin "lag" bị coi như đã có chữ Hán khớp tr�
 một âm có nguyên âm (`lag` hiện la g) là chữ không phải tiếng Việt, chữ Latin lên thanh (vị trí 2); có nhiều chữ thì cả
 cụm Latin (`không lag`) đứng trước chữ đầu (`không`). Gõ tắt dính liền âm gõ đủ (`twcmieenf`) và gõ liền (`chunom`) không
 đổi. Đã chốt âm thì lựa chọn 空lag vẫn lên thanh khi thu bảng (bảng mở thì nằm ở lưới, như trước).
+
+**Xoá trong bảng thả nhận lúc chạm, như chốt âm (2026-11-17, chờ duyệt).** Người dùng báo "mở bảng thả ra lại xoá chậm".
+Đo cụm 0 → 30 trên điện thoại bằng chạm adb (bản đang sửa, chưa commit; gõ 341 phím, mở bảng, chốt 60 âm, bỏ chốt 60
+âm, xoá phím): gõ, mở bảng, chốt âm đều ổn; bỏ chốt / xoá thì mỗi lần chạm phải chờ một lần dựng bảng (chờ 120 ms xem
+còn chạm tiếp không, rồi tính lưới ~87 ms), chạm nhanh hơn nhịp đó thì xếp hàng, thả tay rồi vẫn xoá tiếp vài giây. Lõi
+không phải nguyên nhân (máy tính: bỏ chốt 60 âm 691 → 705 ms, ngang). Sửa: nút xoá của bảng bỏ chốt / xoá phím ngay, lưới
+dựng lại một lần khi dừng tay (đang lùi bước chọn ở cột trái thì vẫn chờ như cũ). Điện thoại, 60 lần chạm trong ~3,7 giây:
+
+| Thao tác | Trước | Sau | Thay đổi |
+| --- | --- | --- | --- |
+| Bỏ chốt 60 âm: xong sau lần chạm cuối | 4,01 giây, còn 10 âm chưa bỏ | 0,17 giây, đủ 60/60 | **nhanh hơn 96%** |
+| Bỏ chốt 60 âm: số lần tính / vẽ lưới | 47 / 47 | 2 / 2 | nhanh hơn 96% |
+| Xoá 341 phím trong bảng: số lần vẽ lưới | 88 (đợt 320 lần chạm, còn ~65 phím chưa xoá khi đo) | 1 (xoá hết) | **Đột phá** |
+| Chốt 60 âm (không đổi) | 0,13 giây | 0,17 giây | ngang |
+
+Máy ảo: bỏ chốt 60 âm 4,08 → 0,18 giây; quay màn hình lúc bỏ chốt thấy thanh gợi ý chỉ đổi 2 lần, không lần nào quay
+lại trạng thái cũ (không chớp). Máy ảo có lần báo "không phản hồi" lúc xoá: luồng vẽ kẹt trong trình đồ hoạ của máy ảo
+(`qemu_pipe_read`), bản trước cũng có khung hình treo 4,95 giây như vậy, không do bàn phím.
+
+Người dùng thử: giữ xoá lúc đã chốt âm "hơi nhanh quá" (không còn bị bảng kìm, giữ xoá nhanh dần tới 20 ms một âm). Sửa:
+giữ xoá khi lần xoá kế tiếp là cả một âm đã chốt / chữ đã chọn thì đều 0,2 giây một lần (nhịp cũ), không nhanh dần; hết
+âm chốt thì xoá phím nhanh dần như bàn phím. Máy ảo, giữ xoá 3 giây khi đã chốt 60 âm: bỏ chốt 13 âm, cách nhau ~0,22 giây.
+
+Cùng đợt (2026-11-17, chờ duyệt):
+
+- **Khung kính hiện sớm khi xoá lùi.** Phần bị "…" che ngắn (ít hơn 5 lần xoá) thì khung kính chỉ hiện khi chỗ xoá đã
+  vào phần bị che, không kịp thấy đếm ngược. Sửa: còn "…" mà chỉ còn ≤ 5 lần xoá nữa là hết chữ chọn / âm chốt thì khung
+  kính hiện từ lần đó (ở chữ chọn / âm chốt sau cùng), đếm 5, 4, 3, 2, 1. Máy ảo, 15 âm (2 âm bị che): hiện từ số 5.
+- **Chữ Latin cho chữ gõ liền không có trong từ điển** (`alo`). Chỉ có câu lõi tự ghép (音嚧 = a + lo) phủ hết phím nên
+  chữ Latin nằm trong lưới. Sửa: chữ gõ liền nhiều âm, âm nào cũng có nguyên âm, mà không mục từ điển nào khớp trọn (câu
+  tự ghép không tính) là chữ không phải tiếng Việt: chữ Latin lên thanh (vị trí 2), như `lag`. Gõ tắt (có đoạn toàn phụ
+  âm) không đổi. Hệ quả: `chunom` (không dấu) chỉ có câu tự ghép 眾掩 nên giờ cũng có chữ Latin "chunom" ở vị trí 2.
+  Người dùng chọn giữ, rồi đặt luôn quy tắc chung (mục F3 "Chữ Latin"): mọi chữ có chữ Latin ở vị trí thứ 2, cả cụm Latin
+  ở ô đầu bảng thả, chọn ở cột trái thì theo lựa chọn, 𡨸單 cũng có. Máy ảo: `khoong mootj hai` → thanh 空沒𠄩 · không,
+  ô đầu bảng thả "không một hai", chốt không → 空một; `trung` chọn ch → chung (ô 2), bật 𡨸單 → 眾 · chung.
+- **Trang từ điển:** (1) bỏ trống ô khi thêm / sửa mục thì báo "Chưa nhập chữ" / "Chưa nhập âm đọc" (trước: "thiếu âm
+  đọc sau dấu ;", nói theo định dạng tệp); (2) dòng phụ dưới tiêu đề xuống dòng khi không đủ chỗ (trước: "A → Z" bị cắt ở
+  mép nút tìm / thêm trên điện thoại); (3) bật / tắt từ điển tiếng Anh "siêu lag": mỗi lần gạt đếm lại số mục mọi từ điển,
+  đọc lại cả tệp tiếng Anh (121.813 mục) trên luồng giao diện, **1,43 giây** trên máy ảo. Sửa: nhớ số mục theo tệp (không
+  đổi thì không đếm lại, bật / tắt không đổi tệp), đếm lần đầu ở luồng nền ("Đang đếm số mục…" rồi hiện số).
+  (4) mở từ điển tiếng Anh "siêu lag" (2026-11-18): trên luồng giao diện, đọc + tách tệp **1.437 ms** (mỗi dòng tách
+  bằng regex, chuẩn hoá NFC), xếp a → z **797 ms** (mỗi lần so sánh bỏ dấu lại cả hai từ bằng regex + NFD); trang hiện
+  sau 2,96 giây; mỗi chữ gõ vào ô tìm cũng xếp lại. Sửa: dòng đã đúng dạng thì không tách regex / chuẩn hoá lại; khoá bỏ
+  dấu tính một lần mỗi mục, xếp một lần, giữ đến khi sửa từ điển; chữ ASCII bỏ dấu chỉ là chữ thường. Máy ảo: đọc 219 ms,
+  xếp 53 ms, tổng **2.234 → 272 ms (nhanh hơn 88%)**, trang hiện sau 1,05 giây (trang nào cũng mất ~0,6 giây để hiện
+  trên máy ảo); ô tìm 5–16 ms mỗi chữ. Từ điển tiếng Việt cũng nhờ: 121 ms.
+
+- **Phím đầu tiên lag sau khi bàn phím khởi động** (cài bản mới, hay Android tắt bàn phím rồi bật lại; người dùng báo
+  2026-11-18). Nhật ký điện thoại: nạp từ điển chặn luồng giao diện ~0,66 giây (đọc 31 ms, nạp vào lõi 270 ms, tách số gốc
+  / phần đã học `rebase` **362 ms**, bước mới của đợt "học không làm mòn số gốc"). Các lần mở bàn phím sau, phím đầu
+  16–18 ms như phím thường. Sửa: (1) `rebase` đọc thẳng từng dòng từ điển đóng gói, không dựng từ điển thứ hai (máy tính:
+  150 → 100 ms, `core/examples/rebasetime.rs`, kết quả giống hệt); (2) chạy ở luồng nền ngay sau khi nạp, vì nó không đổi
+  độ phổ biến dùng để xếp gợi ý (chỉ cần cho lúc chia đôi phần đã học); riêng lần gộp từ điển sau khi cài bản mới (lưu tệp
+  ngay sau đó, một lần mỗi lần cài) vẫn làm ngay. Máy ảo: luồng giao diện chỉ còn đọc + nạp (~180–220 ms), `rebase` ở nền
+  190–290 ms. Gõ ngay trong lúc `rebase` đang chạy thì phím đó chờ phần còn lại. Điện thoại (01:28, ngay sau khi cài):
+  luồng giao diện nạp từ điển ~663 → ~318 ms (**nhanh hơn 52%**: đọc 31 + nạp 287 ms); `rebase` ở nền 238 ms, xong 1,4 giây
+  trước phím đầu; phím đầu (`onChar`) 46 ms, không phải chờ.
+
+Còn chậm (chưa sửa): tra gợi ý khi gõ ở luồng nền trên điện thoại trung bình 43 ms, 39% số lần > 50 ms (gợi ý hiện trễ,
+phím không khựng); mở bảng tra cột trái 107–129 ms.

@@ -1,9 +1,5 @@
-<!-- Bàn phím một tay: bàn phím thu về một bên, mũi tên chỉ hướng dồn. -->
+<!-- Một tay: bàn tay cầm điện thoại, như Gboard (hình lấy từ APK Gboard 2026-11-18). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
-        android:pathData="M9,6h12c0.55,0 1,0.45 1,1v10c0,0.55 -0.45,1 -1,1H9c-0.55,0 -1,-0.45 -1,-1V7c0,-0.55 0.45,-1 1,-1zM9.8,7.8v8.4h10.4V7.8z" />
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M11,9.2h1.6v1.6H11zM13.7,9.2h1.6v1.6h-1.6zM16.4,9.2H18v1.6h-1.6zM11,12h1.6v1.6H11zM13.7,12h1.6v1.6h-1.6zM16.4,12H18v1.6h-1.6zM12.2,14.6h5.6v0.8h-5.6z" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M6.4,8.6L3,12l3.4,3.4 1.1,-1.1L5.2,12l2.3,-2.3z" />
+    android:width="24dp" android:height="24dp" android:viewportWidth="960" android:viewportHeight="960">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M720,800V635V568q0-30 0-36t0,13v26V240V160V800ZM323,920H280q-66,0-113-47T120,760V440q0-66 47-113t113-47h80V635l116-58q23-12 49-7.5T569,592l45,46L412,880q-17,19-40,29.5T323,920Zm397-40H412l67-80H720V160H360V280H280V160q0-33 23.5-56.5T360,80H720q33,0 56.5,23.5T800,160V800q0,33-23.5,56.5T720,880ZM568.5,268.5Q580,257 580,240t-11.5-28.5T540,200t-28.5,11.5T500,240t11.5,28.5T540,280t28.5-11.5ZM492,658L280,765V360q-33,0-56.5,23.5T200,440V760q0,34 23.5,57T280,840h43q9,0 17-3.5T354,826L492,658Z" />
 </vector>

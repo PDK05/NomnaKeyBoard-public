@@ -29,6 +29,7 @@ object NativeCore {
     @JvmStatic external fun candidatesAfter(handle: Long, before: String, keys: String, limit: Int): String
     @JvmStatic external fun select(handle: Long, text: String, reading: String): Boolean
     @JvmStatic external fun clearLearned(handle: Long, defaults: String)
+    @JvmStatic external fun rebase(handle: Long, defaults: String)
     @JvmStatic external fun dictText(handle: Long): String
     @JvmStatic external fun dictLoad(handle: Long, content: String)
     @JvmStatic external fun dictImport(handle: Long, contents: String, apply: Boolean): String

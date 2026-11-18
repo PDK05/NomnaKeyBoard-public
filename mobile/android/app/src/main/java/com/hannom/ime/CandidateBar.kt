@@ -102,6 +102,8 @@ class CandidateBar(context: Context, private val onPick: (Candidate) -> Unit, pr
     private companion object {
         /** Chỉ xét chừng này gợi ý đầu khi xếp thanh (danh sách có thể tới vài trăm). */
         const val MAX_SCAN = 40
+        /** Thanh gợi ý màn hình ngang: số ô đều nhau, như Gboard (người dùng muốn 2026-11-17). */
+        const val LANDSCAPE_CELLS = 8
         /** Tổng số chữ Hán tối đa trên thanh khi có cụm 3–6 chữ. */
         const val BUDGET = 11
         /** Cỡ chữ gợi ý khi thanh đủ chỗ (sp). */
@@ -125,6 +127,10 @@ class CandidateBar(context: Context, private val onPick: (Candidate) -> Unit, pr
     /** Vị trí (trong danh sách gợi ý) các gợi ý đang hiện trên thanh. */
     private var shown: Set<Int> = emptySet()
 
+    /** Gợi ý đầu đang hiện trên thanh (lần [showCandidates] gần nhất), `null` nếu thanh trống. */
+    var firstShown: Candidate? = null
+        private set
+
     /** Gợi ý chưa có trên thanh, cho bảng lưới (⌄). */
     fun hidden(items: List<Candidate>) = items.filterIndexed { i, _ -> i !in shown }
 
@@ -136,9 +142,26 @@ class CandidateBar(context: Context, private val onPick: (Candidate) -> Unit, pr
 
     /** Cách xếp [items] lên thanh: vị trí các gợi ý lên thanh, cỡ chữ, và có vừa thanh không ([showCandidates]). */
     private fun layout(items: List<Candidate>): Triple<List<Int>, Float, Boolean> {
+        if (landscapeBar && items.isNotEmpty() && cellUnits(items[0].text) <= LANDSCAPE_CELLS) {
+            // Màn hình ngang như Gboard (đo trên điện thoại 2026-11-17, gõ zhong): thanh chia [LANDSCAPE_CELLS] ô đều
+            // nhau, gợi ý vừa một ô (chữ đơn, từ kép, chữ Latin ngắn như `trung`) chiếm một ô, dài hơn thì nhiều ô.
+            val picked = ArrayList<Int>()
+            var used = 0
+            for ((i, c) in items.withIndex().take(MAX_SCAN)) {
+                if (c.panelFirst && i > 0) continue
+                val u = cellUnits(c.text)
+                if (used + u > LANDSCAPE_CELLS) continue
+                picked.add(i)
+                used += u
+                if (used == LANDSCAPE_CELLS) break
+            }
+            return Triple(picked, MAX_SP, true)
+        }
         val picked = ArrayList<Int>()
         val lengths = ArrayList<Int>()
         for ((i, c) in items.withIndex().take(MAX_SCAN)) {
+            // Cả cụm Latin nhiều chữ chỉ ở ô đầu bảng thả ([Candidate.panelFirst]).
+            if (c.panelFirst && i > 0) continue
             val len = slotLength(c.text)
             lengths.add(len)
             if (picked.isEmpty() || fits(lengths)) picked.add(i) else lengths.removeAt(lengths.lastIndex)
@@ -177,8 +200,10 @@ class CandidateBar(context: Context, private val onPick: (Candidate) -> Unit, pr
         val (picked, size, fit) = layout(items)
         // Ít gợi ý thì không giãn ra cả thanh: các ô vẫn rộng như khi thanh đủ ngăn theo khuôn [fits] (chữ đơn
         // 6 ngăn, từ kép 5 ngăn, cụm dài hơn 11 chữ), xếp từ ngăn 1 bên trái, phần còn lại để trống.
-        fun weight(i: Int) = maxOf(slotLength(items[i].text), 2).toFloat()
+        val cells = landscapeBar && fit && picked.isNotEmpty() && cellUnits(items[picked[0]].text) <= LANDSCAPE_CELLS
+        fun weight(i: Int) = if (cells) cellUnits(items[i].text).toFloat() else maxOf(slotLength(items[i].text), 2).toFloat()
         fun capacity(): Float {
+            if (cells) return LANDSCAPE_CELLS.toFloat()
             val han = picked.map { slotLength(items[it].text) }
             if (han.isEmpty()) return 0f
             return when (han.max()) {
@@ -188,6 +213,7 @@ class CandidateBar(context: Context, private val onPick: (Candidate) -> Unit, pr
             }
         }
         shown = picked.toSet()
+        firstShown = picked.firstOrNull()?.let(items::get)
         picked.forEachIndexed { n, i ->
             strip.addView(chip(items[i].text, highlight = n == 0, slot = true, fit = fit, sizeSp = size, weight = weight(i)) { onPick(items[i]) })
         }
@@ -364,8 +390,9 @@ class CandidateBar(context: Context, private val onPick: (Candidate) -> Unit, pr
         leadButton.setColorFilter(theme.text)
         leadButton.contentDescription = lead.label
         leadButton.background = null
-        // Ngang: icon ⊞ vẽ 28dp (bốn ô rộng chừng 19dp như Gboard).
-        val leadPad = context.dpi(if (landscapeBar && lead.icon == R.drawable.ic_apps) 6 else 8)
+        // Icon ⊞ vẽ 28dp (bốn ô rộng chừng 18–19dp như Gboard, đo trên điện thoại 2026-11-18: 64 px ở 3,5 px/dp); các
+        // nút khác 24dp như Gboard.
+        val leadPad = context.dpi(if (lead.icon == R.drawable.ic_apps) 6 else 8)
         leadButton.setPadding(leadPad, leadPad, leadPad, leadPad)
         leadButton.setOnClickListener { lead.action() }
 
@@ -410,9 +437,10 @@ class CandidateBar(context: Context, private val onPick: (Candidate) -> Unit, pr
             setColor(theme.key)
             if (editing) setStroke(context.dpi(2), theme.accent)
         }
-        // Màn hình ngang thanh chỉ cao 40dp: nền thu về 34dp như Gboard cho khỏi chạm mép, vùng bấm vẫn 40dp.
-        val inset = if (landscapeBar) context.dpi(3) else 0
-        val pad = context.dpi(if (landscapeBar) 9 else 8)
+        // Nền tròn 34dp, icon 20dp như Gboard (đo trên điện thoại 2026-11-18: vòng 118 px, bánh răng 59 px ở 3,5 px/dp);
+        // vùng bấm vẫn 40dp.
+        val inset = context.dpi(3)
+        val pad = context.dpi(10)
         cornerButton.background = android.graphics.drawable.InsetDrawable(oval, inset)
         // Sau khi đặt nền: InsetDrawable ghi đè padding của view.
         cornerButton.setPadding(pad, pad, pad, pad)
@@ -462,6 +490,15 @@ class CandidateBar(context: Context, private val onPick: (Candidate) -> Unit, pr
     private fun availableWidth(): Float {
         val w = if (width > 0) width else resources.displayMetrics.widthPixels
         return (w - context.dpi(44)).toFloat()
+    }
+
+    /** Số ô (trên [LANDSCAPE_CELLS] ô đều nhau của thanh ngang) [text] cần ở cỡ [MAX_SP], kể cả lề. */
+    private fun cellUnits(text: String): Int {
+        val cell = availableWidth() / LANDSCAPE_CELLS
+        measurePaint.textSize = context.sp(MAX_SP)
+        measurePaint.typeface = if (hanLength(text) > 0) context.hanNomTypeface() else context.robotoTypeface()
+        val need = measurePaint.measureText(text) + 2f * slotPadding(text)
+        return kotlin.math.ceil(need / cell).toInt().coerceAtLeast(1)
     }
 
     /** Lề trái + phải của một ô gợi ý: chữ Hán sát nhau hơn, chữ Latin cần thoáng cho khỏi dính. */
@@ -587,11 +624,28 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
     var typedChunk: (Int) -> String = { "" }
     var onDelete: () -> Unit = {}
     var onEnter: () -> Unit = {}
+    /** Chạm một dấu câu ở cột trái ([PUNCTUATION]): như ấn phím dấu câu. */
+    var onPunctuation: (String) -> Unit = {}
     /**
      * Đang thu hẹp ở cột trái: các chữ (của [narrowed]) mà lưới hiện, để thanh gợi ý phía trên bỏ chúng đi và đôn
-     * các gợi ý khác lên (không lặp giữa thanh và lưới); `null` khi thôi thu hẹp, thanh trở lại như cũ.
+     * các gợi ý khác lên (không lặp giữa thanh và lưới); `null` khi thôi thu hẹp, thanh trở lại như cũ. Kèm chữ Latin
+     * theo lựa chọn ở cột trái ([pointedLatin]): nó thay chữ Latin cũ ở ô 2 của thanh, không xuống lưới.
      */
-    var onNarrowing: (Set<String>?) -> Unit = {}
+    var onNarrowing: (Set<String>?, Candidate?) -> Unit = { _, _ -> }
+    /** Chữ Latin theo lựa chọn ở cột trái của lần [render] gần nhất (xem [onNarrowing]). */
+    private var narrowLatin: Candidate? = null
+
+    /**
+     * Chữ Latin của âm đang được trỏ tới (HanNomIME.withPointedLatin): luôn ở ô 2 của thanh gợi ý, thay chữ Latin cũ,
+     * kể cả khi mới chọn một phần âm hay đã chốt âm (người dùng muốn 2026-11-18). Cả cụm Latin ([Candidate.panelFirst])
+     * không tính.
+     */
+    private fun pointedLatin(list: List<Candidate>) = list.firstOrNull { it.literal && !it.panelFirst }
+    /**
+     * Thanh gợi ý hiện các mục đầu của danh sách còn vừa thanh; trả các mục còn lại cho lưới (không lặp). Dùng khi bật
+     * 𡨸單 và khi mở bảng / đã chốt âm.
+     */
+    var onBar: (List<Candidate>) -> List<Candidate> = { it }
     /** Thanh gợi ý đang bỏ bớt các chữ của lưới (xem [onNarrowing]). */
     var narrowing = false
         private set
@@ -657,7 +711,58 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
     private var shownLocks: List<String> = emptyList()
     /** Nhãn các âm đang chốt (như [onLocks] báo lần cuối). */
     val lockLabels: List<String> get() = locks.indices.map(::lockedLabel)
-    private val rows = LinearLayout(context).apply { orientation = VERTICAL }
+
+    /**
+     * Nhãn phần đã chọn dở (chưa chốt) của âm đang trỏ tới, như đầu cột trái (`t…`, `tôi…`, `tối`); rỗng khi chưa chọn
+     * gì. Khung gõ hiện nó thay cho âm đã gõ ở chỗ tô vàng (người dùng muốn 2026-11-18).
+     */
+    val pickingLabel: String get() = if (picked.isEmpty()) "" else pickedLabel(picked, locks.size)
+    /** [pickingLabel] vừa đổi (sau mỗi lần chọn / bỏ chọn ở cột trái). */
+    var onPicking: () -> Unit = {}
+    private var shownPicking = ""
+    /**
+     * Các hàng lưới. Các lớp bọc ngoài bàn phím (LinearLayout có weight lồng nhau) đo lại lưới ~16 lần mỗi khung hình
+     * (đo trên máy ảo 2026-11-17: 12 hàng, mỗi lần 1–5 ms; lưới 300 chữ thì mở bảng khựng 65–200 ms mỗi khung hình).
+     * Hàng lưới chỉ đổi khi dựng ([rowsChanged]), nên cùng kích thước đo thì trả lại kết quả lần trước, không đo lại các ô.
+     */
+    private val rows = object : LinearLayout(context) {
+        /** Kết quả đo theo từng cặp kích thước được hỏi (các lớp ngoài hỏi vài kích thước khác nhau mỗi khung hình). */
+        private val measured = HashMap<Long, Long>()
+        /** Kích thước đo thật gần nhất: các ô đang mang kết quả đo của nó (onLayout dùng). */
+        private var realSpec = -1L
+
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            if (rowsChanged) {
+                measured.clear()
+                rowsChanged = false
+            }
+            val spec = (widthMeasureSpec.toLong() shl 32) or (heightMeasureSpec.toLong() and 0xffffffffL)
+            val known = measured[spec]
+            if (known != null) {
+                setMeasuredDimension((known shr 32).toInt(), known.toInt())
+                return
+            }
+            perf("  grid.measure", "$childCount hàng") { super.onMeasure(widthMeasureSpec, heightMeasureSpec) }
+            realSpec = spec
+            measured[spec] = (measuredWidth.toLong() shl 32) or (measuredHeight.toLong() and 0xffffffffL)
+        }
+
+        override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+            // Các ô phải mang kết quả đo đúng bề ngang được xếp: lần đo cuối là kích thước khác (lấy từ bộ nhớ) thì đo
+            // thật lại cho đúng bề ngang đó trước khi xếp.
+            val w = MeasureSpec.makeMeasureSpec(r - l, MeasureSpec.EXACTLY)
+            if (realSpec ushr 32 != w.toLong() and 0xffffffffL) {
+                val h = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+                perf("  grid.measure", "$childCount hàng (xếp)") { super.onMeasure(w, h) }
+                realSpec = (w.toLong() shl 32) or (h.toLong() and 0xffffffffL)
+                setMeasuredDimension(r - l, b - t)
+            }
+            super.onLayout(changed, l, t, r, b)
+        }
+    }.apply { orientation = VERTICAL }
+
+    /** Các hàng lưới vừa đổi (thêm / bỏ hàng, ô, chiều cao chừa): lần đo tới phải đo lại thật ([rows]). */
+    private var rowsChanged = true
     private val pageScroll = object : ScrollView(context) {
         /** Lần nhấc tay này đã vuốt nhanh ([fling]). */
         private var flung = false
@@ -690,6 +795,7 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
             if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
                 flung = false
                 touching = true
+                scrollTarget = -1
             }
             val handled = super.onTouchEvent(ev)
             val up = ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL
@@ -708,28 +814,44 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
         isVerticalScrollBarEnabled = false
         addView(rows, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
     }
-    private val upButton = sideButton(text = "▲") { pageScroll.smoothScrollBy(0, -pageHeight()) }
+    // Cuộn từ chỗ đang đứng như trước (tính từ trang đích của lần ấn trước thì người dùng không chấp nhận, 2026-11-16).
+    private val upButton = sideButton(text = "▲") { pageTo(pageScroll.scrollY - pageHeight()) }
     private val downButton = sideButton(text = "▼") {
         loadMoreIfNeeded()
-        pageScroll.smoothScrollBy(0, pageHeight())
+        pageTo(pageScroll.scrollY + pageHeight())
     }
     /** Đang thu hẹp ở cột trái thì xoá là lùi một bước thu hẹp; hết bước mới xoá chữ / phím như thường. */
-    // Giữ nút: lần lặp nào bảng còn đang tra lõi thì bỏ qua (không dồn lại, nhả tay là thôi xoá).
-    private val deleteButton = sideButton(icon = R.drawable.ic_backspace) { whenReady(::deleteStep) }
-        .also { repeatOnHold(it) { if (!pending) deleteStep() } }
+    // Giữ nút: lần lặp nào phải xếp hàng chờ bảng tra lõi thì bỏ qua (không dồn lại, nhả tay là thôi xoá).
+    private val deleteButton = sideButton(icon = R.drawable.ic_backspace) { deleteNow(hold = false) }
+        .also { repeatOnHold(it) { deleteNow(hold = true) } }
 
     /**
      * Nút xoá của bảng: đang chọn dở âm hiện tại thì lùi một bước chọn; không thì như phím xoá của bàn phím (xoá dấu
      * cách, gỡ chữ Hán đã chọn, rồi xoá cả âm đã chốt), không mở lại âm đã chốt (không hiện nền vàng; người dùng muốn
      * 2026-11-15). Muốn chọn lại âm đã chốt thì dùng nút "‹".
+     * Như phím chốt âm ([lockNow]): bỏ chốt / xoá phím ngay, không chờ lần dựng đang tra dở; lưới
+     * chỉ dựng lại khi dừng tay ([render]). Xếp hàng chờ ([whenReady]) thì mỗi lần xoá chờ một lần dựng (~0,2 giây trên
+     * điện thoại): chạm 60 lần bỏ chốt trong 3,6 giây, 4 giây sau vẫn còn xoá (đo 2026-11-17). Đang lùi bước chọn ở cột
+     * trái thì vẫn chờ (cần các lựa chọn tự chọn của lần dựng).
      */
-    private fun deleteStep() {
-        if (picked.isNotEmpty()) pick(null) else onDelete()
+    private fun deleteNow(hold: Boolean) {
+        if (picked.isNotEmpty()) {
+            if (!hold || !pending) pick(null)
+            return
+        }
+        if (pending && waiting.isNotEmpty()) {
+            if (!hold) whenReady { onDelete() }
+        } else {
+            onDelete()
+        }
     }
 
     /**
      * Giữ nút để lặp lại như phím xoá của bàn phím (người dùng muốn 2026-11-15): sau [HOLD_DELAY_MS] ms thì lặp, nhanh
      * dần từ [HOLD_SLOW_MS] tới [HOLD_FAST_MS] ms một lần; chạm nhanh rồi nhả thì làm một lần.
+     * Lần xoá kế tiếp là cả một âm đã chốt / chữ đã chọn ([wholeSyllable]): đều [HOLD_SYLLABLE_MS] ms một lần, không
+     * nhanh dần. Từ khi xoá nhận ngay lúc chạm ([deleteNow]), giữ xoá bỏ chốt tới 20 ms một âm, người dùng thấy "hơi nhanh
+     * quá" (2026-11-17); trước đó bảng kìm lại ~0,2 giây một âm.
      */
     @SuppressLint("ClickableViewAccessibility")
     private fun repeatOnHold(v: View, action: () -> Unit) {
@@ -740,6 +862,12 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
                 if (!repeating) interval = HOLD_SLOW_MS
                 repeating = true
                 action()
+                if (wholeSyllable()) {
+                    // Hết âm chốt thì xoá phím nhanh dần lại từ đầu.
+                    interval = HOLD_SLOW_MS
+                    v.postDelayed(this, HOLD_SYLLABLE_MS)
+                    return
+                }
                 v.postDelayed(this, interval.toLong())
                 interval = (interval * HOLD_SPEEDUP).coerceAtLeast(HOLD_FAST_MS)
             }
@@ -826,10 +954,25 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
     }
 
     /** [all]: mọi gợi ý; [hidden]: các gợi ý chưa có trên thanh (bảng hiện các gợi ý này khi không lọc). */
-    fun show(all: List<Candidate>, hidden: List<Candidate>, keys: String) {
+    /** Gọi một lần khi lần dựng lưới kế tiếp xong (mở bảng: lúc đó mới đổi bàn phím sang bảng). */
+    var onReady: (() -> Unit)? = null
+
+    fun show(all: List<Candidate>, hidden: List<Candidate>, keys: String, opening: Boolean = false) {
         syncKeys(keys)
         this.all = all
         this.hidden = hidden
+        // Vừa mở bảng mà lưới / cột trái còn giữ kết quả của chuỗi phím khác (gõ âm mới rồi mở bảng): xoá ngay, kẻo hiện
+        // âm cũ trong lúc lõi tính lại ở luồng nền (người dùng báo 2026-11-17: "nháy load âm cũ"). Đang mở thì không
+        // (giữ xoá trong bảng sẽ chớp trắng).
+        if (opening && keys != renderedKeys) {
+            fillGen++
+            rows.removeAllViews()
+            rowsChanged = true
+            filterColumn.removeAllViews()
+            items = emptyList()
+            next = 0
+            lastRow = null
+        }
         render()
     }
 
@@ -846,11 +989,19 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
             this.hidden = hidden
             return
         }
-        if (keys == renderedKeys && renderedSelection && selecting && !single) {
+        // Bật 𡨸單: lưới và thanh chỉ là chữ đơn tra riêng, không theo gợi ý chung; khỏi dựng lại (mở bảng thì dựng hai lần,
+        // cách ~170 ms; đo 2026-11-17).
+        // Đã chốt âm: thanh và lưới theo các chữ khớp các âm đã chốt, cũng không theo gợi ý chung.
+        if (keys == renderedKeys && renderedSelection && (single || locks.isNotEmpty())) {
+            this.all = all
+            this.hidden = hidden
+            return
+        }
+        if (keys == renderedKeys && renderedSelection && selecting) {
             this.all = all
             this.hidden = hidden
             // Thanh gợi ý vừa hiện lại đủ gợi ý mới: bỏ lại các chữ lưới đang giữ (như [render]).
-            onNarrowing(items.mapTo(HashSet()) { it.text })
+            onNarrowing(items.mapTo(HashSet()) { it.text }, narrowLatin)
             return
         }
         show(all, hidden, keys)
@@ -859,7 +1010,8 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
     /** Lần [render] gần nhất hiện các chữ khớp phần chọn dở (không phụ thuộc [all] / [hidden]). */
     private var renderedSelection = false
     /** Chuỗi phím của lần [render] gần nhất (đang tra dở thì chưa tính). */
-    private var renderedKeys: String? = null
+    var renderedKeys: String? = null
+        private set
 
     /**
      * Sắp chọn một gợi ý (ở lưới, thanh gợi ý hay phím cách): nhớ trạng thái thu hẹp lúc đó ([Back]), để xoá chữ vừa
@@ -903,10 +1055,26 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
     val selecting: Boolean get() = picked.isNotEmpty() || locks.isNotEmpty()
 
     /** Các gợi ý khớp phần đang chọn dở ([selecting]), cho thanh gợi ý khi bảng đã thu lên. */
-    fun selection(): List<Candidate> = if (selecting) narrowed(query(picked)) else emptyList()
+    fun selection(): List<Candidate> = selectionQuery()?.let { q ->
+        if (single) firstSingles(Core(narrow, narrowed), q) else narrowed(q)
+    } ?: emptyList()
 
-    /** Lựa chọn gửi cho lõi của [selection] (để tra ở luồng nền); `null` khi không chọn dở gì. */
-    fun selectionQuery(): List<Pair<Int, String>>? = if (selecting) query(picked) else null
+    /**
+     * Lựa chọn gửi cho lõi của [selection] (để tra ở luồng nền); `null` khi không chọn dở gì và không bật 𡨸單. Bật 𡨸單
+     * thì thanh gợi ý vẫn chỉ hiện chữ đơn của âm đầu khi bảng đã thu lên (người dùng muốn 2026-11-17); kết quả lọc bằng
+     * [singlesOf].
+     */
+    fun selectionQuery(): List<Pair<Int, String>>? = when {
+        single -> singleQuery(locks, picked, if (selecting) null else typedSyllable())
+        selecting -> query(picked)
+        else -> null
+    }
+
+    /** Nút 𡨸單 đang bật. */
+    val singleOn: Boolean get() = single
+
+    /** Thanh gợi ý khi bảng thu lên có lọc theo bảng không ([selection]): đang chọn dở hay bật 𡨸單. */
+    val filtersBar: Boolean get() = selecting || single
 
     /**
      * Chuỗi phím đổi (kể cả khi bảng đang thu): bỏ phần chọn dở, trừ khi xoá về đúng lúc chọn một chữ trong lưới thì
@@ -1041,6 +1209,9 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
     /** Còn âm đã chốt. */
     val hasLocks: Boolean get() = locks.isNotEmpty()
 
+    /** Lần xoá kế tiếp gỡ cả một chữ đã chọn ([history]) hay bỏ chốt cả một âm, không phải xoá một phím. */
+    private fun wholeSyllable() = locks.isNotEmpty() || history.isNotEmpty()
+
     /**
      * Phím xoá trong bảng: bỏ chốt âm chốt cuối, âm đó thành chữ thường (đen), không mở lại các lựa chọn lúc chốt
      * (người dùng muốn 2026-11-15). `false` nếu không còn âm đã chốt.
@@ -1135,9 +1306,28 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
     /** Chiều cao mỗi âm ở cột trái ([singleHeight]). */
     private fun filterRowHeight() = (rowHeight * 0.8f).toInt()
 
+    /** Lần dựng lưới để dựng dần các trang sau; dựng lưới mới thì việc dựng dần của lần cũ thôi. */
+    private var fillGen = 0
+
+    /** Chỗ cuộn mà ▲▼ vừa nhắm tới (đang cuộn tới đó), -1 nếu không: mũi tên mờ theo trang đích, không chờ cuộn xong. */
+    private var scrollTarget = -1
+
+    /** Cuộn tới [y] (▲▼), mũi tên đổi ngay theo trang đích. */
+    private fun pageTo(y: Int) {
+        val target = y.coerceIn(0, maxScroll())
+        scrollTarget = target
+        pageScroll.smoothScrollTo(0, target)
+        updatePaging()
+    }
+
+    /** Chỗ cuộn xa nhất, tính theo số hàng đã dựng (đúng cả khi vừa thêm hàng mà chưa đo lại). */
+    private fun maxScroll() = (rows.childCount * rowHeight + rows.paddingBottom - pageScroll.height).coerceAtLeast(0)
+
     private fun updatePaging() {
-        upButton.alpha = if (pageScroll.canScrollVertically(-1)) 1f else 0.4f
-        downButton.alpha = if (pageScroll.canScrollVertically(1) || next < items.size) 1f else 0.4f
+        if (pageScroll.scrollY == scrollTarget) scrollTarget = -1
+        val y = if (scrollTarget >= 0) scrollTarget else pageScroll.scrollY
+        upButton.alpha = if (y > 0) 1f else 0.4f
+        downButton.alpha = if (y < maxScroll() || next < items.size) 1f else 0.4f
     }
 
     /** Kết quả gọi lõi cho một lần dựng ([render]), tính ở luồng nền. */
@@ -1146,10 +1336,8 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
         val auto: Set<Int>,
         val level: Pair<Int, List<String>>?,
         val chosen: List<Candidate>?,
-        val groups: Pair<List<Candidate>, Set<Int>>?,
         val quick: String?,
-        /** Chữ đơn theo âm ([singleGroups]) mới tính tới nhóm này; còn lại tính tiếp sau khi hiện ([moreGroups]). */
-        val moreFrom: Int? = null,
+        val firstSingles: List<Candidate>,
     )
 
     /** Lần dựng mới nhất; lần tra ở luồng nền có số khác thì đã cũ. */
@@ -1220,12 +1408,15 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
         val one = single
         val k = keys
         renderedKeys = null
-        val count = syllableCount()
         val typed = if (p.isEmpty() && l.isEmpty()) typedSyllable() else null
+        // Âm đầu đã chốt theo phím đã gõ: chữ của đoạn đó (đủ âm có nguyên âm), lấy trên luồng giao diện.
+        val firstTyped = if (l.isNotEmpty() && l[0].isEmpty()) typedChunk(0).lowercase().takeIf { s ->
+            java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD).any { it in "aeiouy" }
+        } else null
         onCoreNeeded()
         worker.execute {
             if (gen != renderGen) return@execute
-            val result = runCatching { perf("grid.compute", "${l.size} locks $p") { compute(c, l, p, a, one, count, typed) } }.getOrNull()
+            val result = runCatching { perf("grid.compute", "${l.size} locks $p") { compute(c, l, p, a, one, typed, firstTyped) } }.getOrNull()
             main.post {
                 if (gen != renderGen) return@post
                 pending = false
@@ -1238,7 +1429,10 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
                     perf("grid.render", "$keys $picked locks=${locks.size}") { renderTimed(result) }
                     renderedKeys = k
                     after?.invoke()
-                    result.moreFrom?.let { moreGroups(gen, c, l, result.picked, count, it) }
+                    onReady?.let {
+                        onReady = null
+                        it()
+                    }
                 }
                 drain()
             }
@@ -1248,16 +1442,15 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
     /** Phần gọi lõi của [render], chỉ dùng các bản sao trạng thái (chạy ở luồng nền). */
     private fun compute(
         core: Core, locks: List<List<Pair<Int, String>>>, picked: MutableList<Pair<Int, String>>, auto: MutableSet<Int>,
-        single: Boolean, count: Int, typed: String?,
+        single: Boolean, typed: String?, firstTyped: String?,
     ): Computed {
         val level = advance(core, locks, picked, auto)
-        // Bật 𡨸單 khi đã chốt âm: chữ đơn của từng âm, mỗi âm một nhóm ([singleGroups]).
-        // Chữ đơn theo âm: chỉ vài nhóm đầu (lấp trang đầu), các nhóm sau tính dần sau khi hiện ([moreGroups]); tính hết
-        // mới hiện thì ~40 âm đã chốt mất 1,1–1,5 giây trên điện thoại (đo 2026-11-16).
-        val firstGroups = if (single && locks.isNotEmpty()) singleGroups(core, locks, picked, count, 0, SINGLE_GROUPS_STEP) else null
-        val groups = firstGroups?.let { it.first to it.second }
+        // Bật 𡨸單 khi đã chốt âm: chỉ chữ đơn của âm đầu (theo lựa chọn lúc chốt nó), như 单字 của Gboard chỉ hiện chữ
+        // đơn của âm đầu dù gõ nhiều âm (đo trên điện thoại 2026-11-17, `gong chan dang`). Trước đây mỗi âm đã chốt một
+        // nhóm: ~40 âm mất 1,1–1,5 giây, phải tính dần ở luồng nền.
         // Đã chốt âm mà từ điển không có cụm nào khớp: lưới như khi chưa thu hẹp (chọn dần từng chữ), không để trống.
-        val chosen = groups?.first ?: if (picked.isNotEmpty() || locks.isNotEmpty()) {
+        val chosen = if (single) firstSingles(core, singleQuery(locks, picked, typed, firstTyped))
+        else if (picked.isNotEmpty() || locks.isNotEmpty()) {
             core.narrowed(queryOf(locks, picked)).takeIf { locks.isEmpty() || it.isNotEmpty() }
         } else null
         // Chọn nhanh đúng âm đã gõ ([renderFilters]). Âm đã gõ trùng nhãn một lựa chọn của cấp đang hỏi (gõ `a`: vần a)
@@ -1266,7 +1459,9 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
             picked.isEmpty() && locks.isEmpty() && level?.first != PART_SYLLABLE && it.isNotEmpty() &&
                 level?.second?.contains(it) != true && core.narrowed(listOf(PART_SYLLABLE to it)).isNotEmpty()
         }
-        return Computed(picked, auto, level, chosen, groups, quick, firstGroups?.third)
+        // Chữ đơn của âm đầu, xếp cuối lưới khi mở bảng / đã chốt âm ([panelOrder]).
+        val singles = if (!single && (locks.isNotEmpty() || picked.isEmpty())) firstSingles(core, singleQuery(locks, picked, typed, firstTyped)) else emptyList()
+        return Computed(picked, auto, level, chosen, quick, singles)
     }
 
     private fun renderTimed(result: Computed) {
@@ -1274,6 +1469,11 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
         if (labels != shownLocks) {
             shownLocks = labels
             onLocks(labels)
+        }
+        val picking = pickingLabel
+        if (picking != shownPicking) {
+            shownPicking = picking
+            onPicking()
         }
         setBackgroundColor(theme.background)
         columnLine.background = GradientDrawable().apply {
@@ -1300,36 +1500,70 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
 
         // Đang thu hẹp: lưới hiện đủ chữ khớp lựa chọn, thanh bỏ các chữ đó (gõ bương, chọn bương thì mọi chữ
         // bương xuống lưới, thanh còn bường, bướng…; người dùng muốn 2026-11-14).
-        // Các chữ khớp phần đã chọn / chữ đơn theo âm đã tra ở luồng nền ([compute]).
-        val groups = result.groups
-        singleByLock = groups != null
-        groupStarts = groups?.second ?: emptySet()
+        // Các chữ khớp phần đã chọn / chữ đơn của âm đầu đã tra ở luồng nền ([compute]).
         val chosen = result.chosen
-        renderedSelection = chosen != null && groups == null
-        val source = when {
-            chosen != null -> chosen
-            single -> all
-            // Thanh đã hiện hết (mở bảng chỉ để thu hẹp): lưới để trống, không lặp lại gợi ý trên thanh. Riêng khi
-            // cột trái cũng không có gì để chọn thì vẫn hiện, khỏi ra bảng trắng.
-            level == null -> hidden.ifEmpty { all }
-            else -> hidden
-        }
-        items = if (groups != null) source else source.filter { !single || hanLength(it.text) <= 1 }
+        renderedSelection = chosen != null
+        val source = chosen ?: all
         cols = gridColumns()
         updateLockParams()
-        // Bật 𡨸單 cũng như thu hẹp: lưới hiện đủ chữ đơn, thanh bỏ các chữ đó đi (không lặp giữa thanh và lưới).
-        val gridOwns = chosen != null || single
         // Bảng mở thì thanh chỉ vẽ lại ở đây (một lần, khi bảng dựng xong), kể cả khi lưới không giữ chữ nào: vẽ thanh
         // ở chỗ khác rồi lưới bỏ bớt thì thanh nháy giữa gợi ý dài và ngắn (người dùng báo 2026-11-16).
-        narrowing = gridOwns
-        onNarrowing(if (gridOwns) items.mapTo(HashSet()) { it.text } else null)
+        if (single) {
+            // Bật 𡨸單 (như 单字 của Gboard, đo 2026-11-17): thanh và lưới là một danh sách chữ đơn, thanh lấy các chữ
+            // đầu, lưới nối tiếp từ chữ kế, không lặp; thanh không còn cụm dài.
+            val singles = source.filter { hanLength(it.text) <= 1 }
+            narrowing = true
+            items = onBar(singles)
+        } else if (chosen != null && locks.isEmpty()) {
+            // Đang chọn ở cột trái (chưa chốt âm): lưới hiện đủ chữ khớp lựa chọn, thanh bỏ các chữ đó (không lặp giữa
+            // thanh và lưới).
+            // Cụm dài quá [PANEL_MAX_HAN] chữ không xuống lưới (như [panelOrder]).
+            val latin = pointedLatin(source)
+            narrowLatin = latin
+            items = panelFirstOf(source.filter { it !== latin && hanLength(it.text) <= PANEL_MAX_HAN && !it.joined })
+            narrowing = true
+            onNarrowing(items.mapTo(HashSet()) { it.text }, latin)
+        } else {
+            // Mở bảng / đã chốt âm (người dùng muốn 2026-11-17, như Gboard): cụm dài nhất đứng đầu thanh; lưới xếp từ dài
+            // xuống ngắn, mỗi độ dài ít cụm ([panelOrder]), rồi chữ đơn của âm đầu. Lưới ít mục nên dựng nhanh.
+            // Cụm lõi tự ghép (không có trong từ điển): thanh chỉ giữ cụm đầu tiên (câu tốt nhất), các biến thể khác một
+            // chữ (共産党越南, 共産讜越南…) bỏ đi (người dùng muốn 2026-11-17).
+            var firstJoined = true
+            val ordered = longestFirst(chosen ?: all).filter { c ->
+                !c.joined || firstJoined.also { firstJoined = false }
+            }
+            // Chữ Latin của âm đang trỏ tới giữ ô 2 của thanh dù cụm dài nhất được đôn lên đầu ([pointedLatin]).
+            val latin = pointedLatin(ordered)
+            val barList = if (latin == null) ordered else ordered.filter { it !== latin }.let { it.take(1) + latin + it.drop(1) }
+            narrowing = true
+            val rest = onBar(barList)
+            val restTexts = rest.mapTo(HashSet()) { it.text }
+            onBarTexts = barList.filter { it.text !in restTexts }.mapTo(HashSet()) { it.text }
+            // Chữ đơn của âm đầu nối cuối lưới: bỏ chữ Latin của nó (đã có chữ Latin theo các âm đã chốt ở ô 2 của thanh;
+            // trước đây `tôi` lẻ loi ở cuối lưới, người dùng báo 2026-11-18).
+            items = panelOrder(rest, if (latin == null) result.firstSingles else result.firstSingles.filter { !it.literal })
+        }
         rows.removeAllViews()
+        rowsChanged = true
         pageScroll.scrollTo(0, 0)
+        scrollTarget = -1
         next = 0
         lastRow = null
         perf("  appendRows", "${items.size} mục") { appendRows(FIRST_ROWS) }
-        // Trang đầu hiện ngay; các trang sau dựng ngay sau đó, khi màn hình đã vẽ xong trang đầu (đỡ khựng khi chạm).
-        pageScroll.postDelayed({ perf("  appendRows (sau)") { loadMoreIfNeeded() } }, MORE_DELAY_MS)
+        // Trang đầu hiện ngay; các trang sau dựng hết một lượt ngay sau đó, khi màn hình đã vẽ xong trang đầu (đỡ khựng
+        // khi chạm), để ▲▼ không phải chờ dựng (người dùng thấy ▼ "chờ load", 2026-11-17). Quá [ALL_ROWS] hàng thì phần
+        // sau vẫn dựng khi cuộn gần tới.
+        // Dựng mỗi khung hình một trang (dựng 315 mục một lần khựng 40–210 ms trên máy ảo, đo 2026-11-17), lần dựng lưới
+        // mới thì thôi.
+        val token = ++fillGen
+        pageScroll.postDelayed(object : Runnable {
+            override fun run() {
+                if (token != fillGen || next >= items.size || rows.childCount >= ALL_ROWS) return
+                perf("  appendRows (trang)") { appendRows(rowsPerPage()) }
+                updatePaging()
+                pageScroll.postOnAnimation(this)
+            }
+        }, MORE_DELAY_MS)
         pageScroll.post { updatePaging() }
     }
 
@@ -1342,19 +1576,17 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
 
     /** Dựng thêm tối đa [count] hàng lưới. */
     private fun appendRows(count: Int) {
+        rowsChanged = true
         var added = 0
         while (next < items.size) {
             val c = items[next]
             val units = units(label(c))
             var row = lastRow
-            // Nhóm mới (chữ đơn của âm kế tiếp, [singleGroups]) bắt đầu hàng mới.
-            val groupEnd = next in groupStarts
-            if (row != null && (used + units > cols || groupEnd)) {
+            if (row != null && used + units > cols) {
                 // Hàng vừa xong còn thừa ngăn: chia đều cho mọi ô trong hàng, không dồn vào ô cuối (試 dài cả hàng).
-                // Hàng cuối của một nhóm thì để nguyên như hàng cuối lưới.
                 // Chỗ trống dưới phím chốt âm ([LOCK_SPACER]) giữ nguyên 2 ô.
                 val cells = (0 until row.childCount).map(row::getChildAt).filter { it.tag != LOCK_SPACER }
-                val extra = if (groupEnd || cells.isEmpty()) 0f else (cols - used).toFloat() / cells.size
+                val extra = if (cells.isEmpty()) 0f else (cols - used).toFloat() / cells.size
                 for (cell in cells) {
                     (cell.layoutParams as LayoutParams).weight += extra
                     cell.requestLayout()
@@ -1408,7 +1640,10 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
             lastRow = null
         }
         val bottom = ((per - rows.childCount % per) % per) * rowHeight
-        if (rows.paddingBottom != bottom) rows.setPadding(0, 0, 0, bottom)
+        if (rows.paddingBottom != bottom) {
+            rows.setPadding(0, 0, 0, bottom)
+            rowsChanged = true
+        }
     }
 
     /** Cuộn còn chưa tới hai trang là hết phần đã dựng thì dựng thêm. */
@@ -1439,8 +1674,11 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
         // chạm để bỏ lựa chọn cuối.
         // Chưa chọn gì ở âm đang chọn mà đã chốt âm trước: ghi âm đang chọn như đã gõ ("‹ n" sau khi chốt miền; người
         // dùng muốn 2026-11-15, thay cho ghi âm vừa chốt của 2026-11-14); chạm để lùi (mở lại âm vừa chốt).
-        if (picked.isNotEmpty() || locks.isNotEmpty()) {
-            val label = pickedLabel(picked).ifEmpty {
+        // Đã chốt hết các âm: cột chỉ là dấu câu như Gboard, không có mục "‹" (người dùng muốn 2026-11-17); bỏ chốt bằng phím
+        // xoá.
+        val allLocked = locks.isNotEmpty() && locks.size >= syllableCount()
+        if ((picked.isNotEmpty() || locks.isNotEmpty()) && !allLocked) {
+            val label = pickedLabel(picked, locks.size).ifEmpty {
                 when {
                     locks.isEmpty() -> ""
                     locks.size < syllableCount() -> typedChunk(locks.size)
@@ -1451,6 +1689,15 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
                 background = android.graphics.drawable.LayerDrawable(arrayOf(GradientDrawable().apply { setColor(theme.accent) }))
                     .apply { setLayerInset(0, context.dpi(60), context.dpi(14), 0, context.dpi(14)) }
             }, LayoutParams(LayoutParams.MATCH_PARENT, filterRowHeight()))
+        }
+        // Đã chốt hết các âm (chốt âm cuối, phía sau hết âm): không hỏi tiếp, cột là dấu câu cuộn được như Gboard (người
+        // dùng muốn 2026-11-17; danh sách đo trên Gboard 拼音). Chạm dấu thì như ấn phím dấu câu ([onPunctuation]). Chọn
+        // từng cấp ở cột trái (chưa chốt) thì vẫn hỏi như cũ.
+        if (allLocked) {
+            for (p in PUNCTUATION) {
+                filterColumn.addView(item(p, theme.text, 20f) { onPunctuation(p) }, LayoutParams(LayoutParams.MATCH_PARENT, filterRowHeight()))
+            }
+            return
         }
         // Chọn nhanh đúng âm đã gõ (gõ tôi thì có sẵn mục tôi), khỏi chọn từng cấp phụ âm, vần, thanh.
         val quick = quickSyllable
@@ -1492,12 +1739,25 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
      * Phần âm tiết đã chọn, ghép liền như chữ viết: phụ âm đầu + vần (hay nguyên âm đầu) + phụ âm cuối, chưa
      * tới thanh thì thêm "…"; đã chọn cả âm có thanh thì là âm đó (c, ư, c → "cưc…"; rồi cực → "cực").
      */
-    private fun pickedLabel(choices: List<Pair<Int, String>>): String {
-        // Âm có thanh đã chọn sáng lên trong cột ([renderFilters]): nút "‹" chỉ ghi phần trước đó.
-        val by = choices.filter { it.first != PART_SYLLABLE }.toMap()
+    private fun pickedLabel(choices: List<Pair<Int, String>>, syllable: Int): String {
+        // Đã chọn tới cả âm có thanh: đúng âm đó (người dùng muốn 2026-11-17: chọn rõ dấu thì phải hiện đúng).
+        choices.lastOrNull { it.first == PART_SYLLABLE }?.let { return it.second }
+        val by = choices.toMap()
         if (by.isEmpty()) return ""
         val rhyme = by[PART_NUCLEUS] ?: by[PART_VOWEL].orEmpty()
-        return by[PART_INITIAL].orEmpty() + rhyme + by[PART_FINAL].orEmpty() + "…"
+        // Chưa chọn phụ âm đầu ở cột: phụ âm đã gõ của âm đó (gõ h, chọn vần oa → "hoa…", không "oa…"; 2026-11-17).
+        val initial = by[PART_INITIAL] ?: typedInitial(syllable)
+        return initial + rhyme + by[PART_FINAL].orEmpty() + "…"
+    }
+
+    /** Phụ âm đầu đã gõ của âm thứ [i] ([typedChunk]: `h`, `nh`, đ); không có thì rỗng. */
+    private fun typedInitial(i: Int): String {
+        val typed = typedChunk(i).lowercase()
+        if (typed.startsWith("đ")) return "đ"
+        // Dừng ở nguyên âm đầu tiên (kể cả có dấu: à, ơ… so theo chữ gốc), và ở `w` (ư).
+        return typed.takeWhile { c ->
+            c.isLetter() && java.text.Normalizer.normalize(c.toString(), java.text.Normalizer.Form.NFD)[0] !in "aeiouyw"
+        }
     }
 
     /**
@@ -1506,14 +1766,13 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
      */
     private fun lockedLabel(i: Int): String {
         val choices = locks[i]
-        return choices.lastOrNull { it.first == PART_SYLLABLE }?.second ?: pickedLabel(choices).ifEmpty {
+        return choices.lastOrNull { it.first == PART_SYLLABLE }?.second ?: pickedLabel(choices, i).ifEmpty {
             val typed = typedChunk(i).lowercase()
             when {
                 typed == "w" -> "ư…"
-                typed == "dd" -> "đ…"
                 typed.isEmpty() -> "…"
                 // Đoạn có nguyên âm: chữ đã gõ (miền), như khung gõ hiện.
-                typed.all { it in 'a'..'z' } && typed.none { it in "aeiouy" } -> "$typed…"
+                typed.all { it in 'a'..'z' || it == 'đ' } && typed.none { it in "aeiouy" } -> "$typed…"
                 else -> typed
             }
         }
@@ -1565,7 +1824,8 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
 
     /**
      * Số ô một hàng: mỗi ô khoảng [CELL_DP], ít nhất [UNITS] (màn hình dọc giữ như cũ). Gboard màn hình ngang 8 ô, mỗi ô
-     * khoảng 72 dp, từ kép vừa một ô (đo trên Realme 560 dpi, 2026-11-14); lưới ngang của mình khoảng 655 dp nên 8 ô.
+     * khoảng 72 dp, từ kép vừa một ô (đo trên Realme 560 dpi, 2026-11-14, lại 2026-11-17); lưới ngang của mình khoảng
+     * 566 dp nên 8 ô.
      */
     private fun gridColumns() = maxOf(UNITS, (gridWidth() / context.dp(CELL_DP)).toInt())
 
@@ -1591,77 +1851,107 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
 
     private val measurePaint by lazy { android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG) }
 
-    /** Chữ hiện trong ô: chữ đơn theo âm ([singleGroups]) chỉ hiện chữ cuối (chọn thì vẫn chèn cả các chữ trước nó). */
-    /** Gợi ý giữ nguyên chữ Latin của âm đang chọn (`…目標lag`) chỉ hiện chữ Latin đó. */
-    private fun label(c: Candidate): String = when {
-        !singleByLock -> c.text
-        c.literal -> c.reading.substringAfterLast(' ')
-        else -> lastChar(c.text)
-    }
+    /** Chữ hiện trong ô. */
+    private fun label(c: Candidate): String = c.text
 
-    private fun lastChar(text: String): String {
-        val cps = text.codePoints().toArray()
-        return if (cps.isEmpty()) text else String(cps, cps.size - 1, 1)
+    /**
+     * Bật 𡨸單 khi đã chốt âm: chữ đơn của âm đầu theo các lựa chọn lúc chốt nó ([want]), mỗi chữ một lần; kể cả gợi ý
+     * giữ nguyên chữ Latin của âm đó (HanNomIME.withLockedLatin). Một lần tra lõi, như Gboard chỉ hiện âm đầu.
+     */
+    private fun firstSingles(core: Core, want: List<Pair<Int, String>>): List<Candidate> {
+        val out = singlesOf(core.narrowed(want))
+        // Âm có thanh mà từ điển không có chữ nào đúng âm đó: mọi chữ của âm đầu, khỏi ra bảng trắng.
+        return if (out.isEmpty() && want.isNotEmpty() && want.all { it.first == PART_SYLLABLE }) singlesOf(core.narrowed(emptyList())) else out
     }
 
     /**
-     * Bật 𡨸單 khi đã chốt âm: chữ đơn của từng âm, mỗi âm một nhóm (người dùng muốn 2026-11-14): các âm đã chốt rồi âm
-     * cột trái đang trỏ tới. Chữ của âm thứ i là gợi ý i + 1 chữ của lõi khi chốt i âm đầu và chọn đúng như âm thứ i
-     * (các chữ trước là chữ đầu của câu ghép), mỗi chữ cuối một lần. Trả các gợi ý và vị trí đầu mỗi nhóm.
+     * [list] với cụm dài nhất (nhiều chữ Hán nhất; bằng nhau thì cụm xếp hạng cao hơn) đưa lên đầu, còn lại giữ thứ tự.
+     * Chỉ xét cụm không dài hơn số âm đã gõ: cụm đoán trước dài hơn (gõ `t` ra cụm 7 chữ) không tính (2026-11-17).
      */
-    private fun singleGroups(
-        core: Core, locks: List<List<Pair<Int, String>>>, picked: List<Pair<Int, String>>, count: Int,
-        from: Int, max: Int,
-    ): Triple<List<Candidate>, Set<Int>, Int?> {
-        val out = ArrayList<Candidate>()
-        val starts = HashSet<Int>()
-        val targets = locks.indices.map { it to locks[it] } +
-            (if (count > locks.size) listOf(locks.size to picked.toList()) else emptyList())
-        val end = minOf(targets.size, from + max)
-        for ((i, want) in targets.subList(minOf(from, end), end)) {
-            val q = locks.take(i).flatMap { it + (LOCK_LEVEL to "") } + want
-            val seen = HashSet<String>()
-            // Kể cả gợi ý giữ nguyên chữ Latin của âm này (chữ Hán của các âm trước rồi chữ Latin, HanNomIME.withLockedLatin).
-            val group = core.narrowed(q).filter { c ->
-                c.reading.split(' ').size == i + 1 && hanLength(c.text) == (if (c.literal) i else i + 1) &&
-                    seen.add(if (c.literal) c.text else lastChar(c.text))
-            }
-            if (group.isEmpty()) continue
-            starts.add(out.size)
-            out.addAll(group)
-        }
-        return Triple(out, starts, end.takeIf { it < targets.size })
+    private fun longestFirst(list: List<Candidate>): List<Candidate> {
+        val syllables = syllableCount()
+        val i = list.indices.filter { hanLength(list[it].text) <= syllables }.maxByOrNull { hanLength(list[it].text) } ?: return list
+        if (i == 0 || hanLength(list[i].text) <= hanLength(list[0].text)) return list
+        return listOf(list[i]) + list.filterIndexed { j, _ -> j != i }
     }
 
     /**
-     * Tính tiếp chữ đơn theo âm từ nhóm [from] ở luồng nền, mỗi lần [SINGLE_GROUPS_STEP] nhóm, nối vào lưới khi xong; lần
-     * dựng [gen] đã cũ (người dùng vừa thao tác) thì thôi, kẻo việc này giữ lõi mà thao tác mới phải chờ.
+     * Lưới khi mở bảng / đã chốt âm (người dùng muốn 2026-11-17): xếp từ dài xuống ngắn (8, 7… 2 chữ), mỗi độ dài chỉ
+     * [PANEL_PER_LENGTH] cụm (cụm có trong từ điển xếp trước cụm tự ghép), chữ đơn và chữ Latin giữ hết; rồi chữ đơn của
+     * âm đầu ([singles]) chưa có. Thanh gợi ý không giới hạn (lấy đầu danh sách đủ). Cùng độ dài thì giữ thứ tự xếp hạng.
+     * Gõ đủ âm (không gõ tắt) thì không giới hạn gì, chỉ xếp dài trước.
      */
-    private fun moreGroups(
-        gen: Int, core: Core, locks: List<List<Pair<Int, String>>>, picked: List<Pair<Int, String>>, count: Int, from: Int,
-    ) {
-        worker.execute {
-            if (gen != renderGen) return@execute
-            val more = runCatching {
-                perf("grid.single", "${locks.size} locks từ $from") { singleGroups(core, locks, picked, count, from, SINGLE_GROUPS_STEP) }
-            }.getOrNull() ?: return@execute
-            main.post {
-                if (gen != renderGen || !singleByLock) return@post
-                val base = items.size
-                items = items + more.first
-                groupStarts = groupStarts + more.second.map { it + base }
-                onNarrowing(items.mapTo(HashSet()) { it.text })
-                loadMoreIfNeeded()
-                updatePaging()
-                more.third?.let { moreGroups(gen, core, locks, picked, count, it) }
+    /** [list] với cả cụm Latin nhiều chữ ([Candidate.panelFirst]) lên ô đầu, còn lại giữ thứ tự. */
+    private fun panelFirstOf(list: List<Candidate>): List<Candidate> {
+        val (first, rest) = list.partition { it.panelFirst }
+        return first + rest
+    }
+
+    private fun panelOrder(rest: List<Candidate>, singles: List<Candidate>): List<Candidate> {
+        val counts = HashMap<Int, Int>()
+        // Cụm dài hơn số âm đã gõ (cụm đoán trước: gõ `t` ra 時間, 辭典…) không xuống lưới: chưa gõ dài thì lưới không có
+        // cụm dài (người dùng báo 2026-11-17).
+        val syllables = syllableCount()
+        // Mọi âm đã gõ đều đủ (có nguyên âm, như `trung`): hiện hết các cụm dài hơn số âm đã gõ (từ đoán trước: 中國,
+        // 中央…), không giới hạn (người dùng muốn 2026-11-17). Gõ tắt (`t`, `tr`) thì không có các cụm đó.
+        // Cụm dài đúng tới số âm đã gõ thì vẫn mỗi độ dài [PANEL_PER_LENGTH] cụm: bỏ giới hạn này thì gõ `cộng sản đảng
+        // việt nam` ra cả lưới cụm tự ghép 共産黨越蘚, 共産党越南… (người dùng báo 2026-11-17).
+        val full = syllables > 0 && (0 until syllables).all { i ->
+            java.text.Normalizer.normalize(typedChunk(i).lowercase(), java.text.Normalizer.Form.NFD).any { it in "aeiouy" }
+        }
+        val kept = rest.filter { c ->
+            val n = hanLength(c.text)
+            // Lưới không có cụm dài quá [PANEL_MAX_HAN] chữ (người dùng báo 2026-11-17: gõ cả câu thì lưới đầy câu 16
+            // chữ bị cắt "…"); câu dài vẫn ở thanh gợi ý.
+            if (n > PANEL_MAX_HAN) return@filter false
+            // Cụm lõi tự ghép (không có trong từ điển) không xuống lưới (người dùng muốn 2026-11-17).
+            if (c.joined) return@filter false
+            if (n > syllables) return@filter full
+            val max = if (n >= 2) PANEL_PER_LENGTH else Int.MAX_VALUE
+            val used = counts.getOrDefault(n, 0)
+            if (used >= max) false else {
+                counts[n] = used + 1
+                true
             }
+        }.sortedByDescending { hanLength(it.text) }.let(::panelFirstOf)
+        val seen = kept.mapTo(HashSet()) { it.text }
+        onBarTexts?.let(seen::addAll)
+        return kept + singles.filter { seen.add(it.text) }
+    }
+
+    /** Các chữ đang trên thanh gợi ý (lần [onBar] gần nhất), để lưới không lặp lại. */
+    private var onBarTexts: Set<String>? = null
+
+    /** Các chữ đơn (một âm, một chữ; hay giữ nguyên chữ Latin của âm đó) trong [list], mỗi chữ một lần. */
+    fun singlesOf(list: List<Candidate>): List<Candidate> {
+        val seen = HashSet<String>()
+        return list.filter { c ->
+            c.reading.split(' ').size == 1 && hanLength(c.text) == (if (c.literal) 0 else 1) && seen.add(c.text)
         }
     }
 
-    /** Lưới đang hiện chữ đơn theo âm ([singleGroups]). */
-    private var singleByLock = false
-    /** Vị trí đầu mỗi nhóm của lưới: bắt đầu hàng mới. */
-    private var groupStarts: Set<Int> = emptySet()
+    /**
+     * Lựa chọn gửi lõi cho chữ đơn của âm đầu khi bật 𡨸單 (như 单字 của Gboard chỉ hiện âm đầu dù gõ nhiều âm):
+     * - đã chốt âm: theo lựa chọn lúc chốt âm đầu;
+     * - đang chọn ở cột trái: theo các lựa chọn đó;
+     * - âm đầu gõ có thanh (`trungs` → trúng): chỉ chữ của đúng âm đó;
+     * - không thanh (`trung`): mọi chữ của âm đầu, không phân biệt thanh, dấu mũ / móc (trung, trúng, trùng, trưng…),
+     *   chữ đúng âm đã gõ đứng trước (người dùng muốn 2026-11-17).
+     */
+    private fun singleQuery(
+        locks: List<List<Pair<Int, String>>>, picked: List<Pair<Int, String>>, typed: String?, firstTyped: String? = null,
+    ): List<Pair<Int, String>> = when {
+        // Âm đầu chốt theo phím đã gõ (chưa chọn gì): đúng âm đã gõ, kể cả thanh (chốt là chốt đúng âm; 2026-11-17).
+        locks.isNotEmpty() && locks[0].isEmpty() && firstTyped != null -> listOf(PART_SYLLABLE to firstTyped)
+        locks.isNotEmpty() -> locks[0]
+        picked.isNotEmpty() -> picked.toList()
+        typed != null && hasTone(typed) -> listOf(PART_SYLLABLE to typed)
+        else -> emptyList()
+    }
+
+    /** Âm có dấu thanh (sắc, huyền, hỏi, ngã, nặng); dấu mũ / móc / trăng không tính. */
+    private fun hasTone(syllable: String) = java.text.Normalizer.normalize(syllable, java.text.Normalizer.Form.NFD)
+        .any { it in "̣̀́̃̉" }
 
     private fun hanLength(text: String) = text.codePoints().filter { it >= 0x2E80 }.count().toInt()
 
@@ -1704,18 +1994,23 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
         const val SETTLE_MS = 120L
         /** Thẻ của chỗ trống dưới phím chốt âm trong hàng lưới. */
         const val LOCK_SPACER = "lock-spacer"
-        /** Bề rộng mỗi ô lưới mong muốn (dp), để màn hình ngang có nhiều ô hơn ([gridColumns]). */
-        const val CELL_DP = 80f
+        /**
+         * Bề rộng mỗi ô lưới mong muốn (dp), để màn hình ngang có nhiều ô hơn ([gridColumns]). 80 dp thì lưới ngang trên
+         * điện thoại (~566 dp) chỉ 7 cột; Gboard 8 cột (người dùng muốn chia nhiều như Gboard, 2026-11-17).
+         */
+        const val CELL_DP = 70f
         /**
          * Số hàng dựng ngay khi mở / lọc lưới (một trang bốn hàng, đủ thấy), và mỗi lần dựng thêm: ngay sau đó
          * ([MORE_DELAY_MS]) hay khi cuộn gần hết.
          */
         const val FIRST_ROWS = 4
-        /** Số nhóm chữ đơn theo âm tính mỗi lần ([singleGroups], [moreGroups]). */
-        const val SINGLE_GROUPS_STEP = 4
         /** Hai lần dựng lưới cách nhau dưới chừng này (ms) là thao tác dồn dập: hoãn dựng tới khi dừng tay ([render]). */
         const val RAPID_MS = 120L
         const val MORE_ROWS = 12
+        /** Dấu câu ở cột trái khi đã chọn xong âm cuối, theo thứ tự cột trái của Gboard 拼音 (đo 2026-11-17). */
+        val PUNCTUATION = listOf("？", "！", "……", "～", "：", "；", "@", "/", "\"", "%")
+        /** Số hàng dựng một lượt sau trang đầu (~30 trang); danh sách dài hơn thì dựng thêm khi cuộn gần hết. */
+        const val ALL_ROWS = 120
         /** Dựng thêm các trang sau chừng này ms sau trang đầu, để trang đầu kịp hiện. */
         const val MORE_DELAY_MS = 60L
         /** Giữ nút xoá của bảng ([repeatOnHold]): như phím xoá của bàn phím ([KeyboardView]). */
@@ -1723,8 +2018,14 @@ class CandidateGrid(context: Context, private val onPick: (Candidate) -> Unit) :
         const val HOLD_SLOW_MS = 70f
         const val HOLD_FAST_MS = 20f
         const val HOLD_SPEEDUP = 0.9f
+        /** Giữ nút xoá khi mỗi lần xoá là cả một âm đã chốt / chữ đã chọn: ms một lần ([repeatOnHold]). */
+        const val HOLD_SYLLABLE_MS = 200L
         /** Tên từng cấp thu hẹp, theo thứ tự `Part` của lõi. */
         val PART_NAMES = listOf("âm đầu", "nguyên âm", "vần", "âm cuối", "thanh")
+        /** Số cụm mỗi độ dài (từ 2 chữ) trong lưới ([panelOrder]). */
+        const val PANEL_PER_LENGTH = 2
+        /** Cụm dài nhất (số chữ Hán) xuống lưới ([panelOrder]). */
+        const val PANEL_MAX_HAN = 8
         const val PART_INITIAL = 0
         const val PART_VOWEL = 1
         const val PART_NUCLEUS = 2
@@ -1883,7 +2184,8 @@ class InputRoot(
             val row = kotlin.math.round(resizeRow).toInt()
             val gap = kotlin.math.round(resizeGap).toInt()
             if (landscape) {
-                settings.landscapeRowHeight = row
+                // Đúng cỡ mặc định thì lưu 0 (theo mặc định), để mặc định đổi sau này (đo lại Gboard) vẫn có tác dụng.
+                settings.landscapeRowHeight = if (row == landscapeDefaultRow) 0 else row
                 settings.landscapeBottomGap = gap
             } else {
                 val level = Settings.ROW_HEIGHTS.indexOf(row)
@@ -1970,7 +2272,7 @@ class InputRoot(
     }
 
     /** Chiều cao cả trang phím tính theo số hàng chữ. */
-    private val pageRows get() = if (landscape) LANDSCAPE_PAGE_ROWS else Layouts.MAX_ROWS.toFloat()
+    private val pageRows get() = if (landscape) LANDSCAPE_PAGE_ROWS else PORTRAIT_PAGE_ROWS
     private val minRow get() = (if (landscape) Settings.MIN_LANDSCAPE_ROW_HEIGHT else Settings.MIN_ROW_HEIGHT).toFloat()
 
     /** Đang kéo: số đo mới (hàng phím, khoảng trống dưới đáy, bề rộng / khoảng cách một tay), thả tay mới áp. */
@@ -2269,7 +2571,7 @@ class InputRoot(
         composeRow.outlineProvider = null
         panel.addView(emojiSearch, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         emojiSearch.visibility = View.GONE
-        panel.addView(bar, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dpi(48)))
+        panel.addView(bar, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, context.dpi(BAR_DP)))
         body.addView(keyboard, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         body.addView(pad, LayoutParams(LayoutParams.MATCH_PARENT, keyboard.padHeight, Gravity.TOP))
         body.addView(grid, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -2380,6 +2682,17 @@ class InputRoot(
         fitComposeRow()
     }
 
+    /**
+     * Sắp mở bảng: dựng bảng ẩn (đã đo, chưa vẽ) đè sau bàn phím; bàn phím vẫn hiện tới khi bảng dựng xong
+     * ([showGrid]), như Gboard, không thấy bảng hiện kết quả cũ / trống rồi mới lấp (người dùng báo 2026-11-17: "lúc nào
+     * mở bảng thả ra cũng bị thấy chớp load").
+     */
+    fun prepareGrid() {
+        grid.layoutParams.height = keyboard.height.coerceAtLeast(1)
+        grid.setHeight(keyboard.height)
+        if (grid.visibility == View.GONE) grid.visibility = View.INVISIBLE
+    }
+
     fun showGrid(show: Boolean) {
         grid.layoutParams.height = keyboard.height.coerceAtLeast(1)
         grid.setHeight(keyboard.height)
@@ -2435,8 +2748,9 @@ class InputRoot(
     }
 
     /**
-     * Mở / đóng bảng sửa văn bản: cao đúng bằng bàn phím, thanh công cụ vẫn hiện (nút ⊞ thành ✕). [selected]: ô nhập
-     * đang có vùng chọn; [hasText]: ô nhập có chữ; [canPaste]: có chữ để dán (xem [TextEditPanel]).
+     * Mở / đóng bảng sửa văn bản: che cả thanh công cụ và bàn phím (cao bằng chừng đó, như bảng nhớ tạm), về bàn phím
+     * bằng nút ← đầu bảng (người dùng muốn 2026-11-18; trước đây thanh công cụ vẫn hiện, nút ⊞ thành ✕). [selected]:
+     * ô nhập đang có vùng chọn; [hasText]: ô nhập có chữ; [canPaste]: có chữ để dán (xem [TextEditPanel]).
      */
     fun showTextEdit(show: Boolean, selected: Boolean = false, hasText: Boolean = false, canPaste: Boolean = false) {
         if (show == textEditShown) return
@@ -2445,11 +2759,12 @@ class InputRoot(
             showEmojiSearch(false)
             showClipboard(false, false, emptyList())
             if (toolsShown) showTools(false)
-            textEdit.layoutParams.height = keyboard.height
+            textEdit.layoutParams.height = keyboard.height + bar.height
             textEdit.style = keyboard.style
             textEdit.open(selected, hasText, canPaste)
         }
         textEdit.visibility = if (show) View.VISIBLE else View.GONE
+        bar.visibility = if (show) View.GONE else View.VISIBLE
         keyboard.visibility = if (show) View.INVISIBLE else View.VISIBLE
         pad.visibility = if (padActive && !show) View.VISIBLE else View.GONE
         if (bar.showingTools) showToolbar()
@@ -2676,7 +2991,7 @@ class InputRoot(
         landscapeDefaultRow = defaultRow
         keyboard.landscapeDefaultRow = context.dp(defaultRow.toFloat())
         keyboard.landscape = landscape
-        bar.layoutParams.height = context.dpi(if (landscape) 40 else 48)
+        bar.layoutParams.height = context.dpi(if (landscape) 40 else BAR_DP)
         bar.landscapeBar = landscape
         bar.requestLayout()
     }
@@ -2705,8 +3020,11 @@ class InputRoot(
         /** Như [MAX_SHARE] cho màn hình ngang (đo trên Gboard: đỉnh khung lên tới chừng 22% màn hình tính từ trên). */
         const val LANDSCAPE_MAX_SHARE = 0.835f
         // Tỉ lệ màn hình ngang, đo trên Gboard (máy 792 × 354 dp). Các số hàng tính theo bước hàng chữ.
-        /** Chiều cao hàng chữ (cả khe) so với chiều cao màn hình. */
-        const val LANDSCAPE_ROW = 0.11f
+        /**
+         * Chiều cao hàng chữ (cả khe) so với chiều cao màn hình. Đo lại 2026-11-17 trên Gboard cỡ mặc định: bước hàng chữ
+         * 124 px = 35,4 dp trên 354 dp (trước đặt 0,11, cao hơn Gboard ~9%).
+         */
+        const val LANDSCAPE_ROW = 0.10f
         /** Khe giữa các hàng phím (dp). */
         const val LANDSCAPE_GAP_Y = 3.45f
         /**
@@ -2718,8 +3036,20 @@ class InputRoot(
         const val LANDSCAPE_BOTTOM_ROW = 0.953f
         /** Chiều cao cả trang 5 hàng, tính theo số hàng chữ. */
         const val LANDSCAPE_PAGE_ROWS = 3 + LANDSCAPE_NUMBER_ROW + LANDSCAPE_BOTTOM_ROW
-        /** Chiều cao chuẩn để tính cỡ chữ, icon trên phím, so với hàng chữ. */
-        const val LANDSCAPE_TEXT = 1.13f
+        /**
+         * Màn hình dọc, đo trên Gboard cỡ mặc định (điện thoại 3,5 px/dp, 2026-11-18): bước hàng chữ 161 px (46 dp, khe
+         * 28 px), hàng số 150 px, hàng phím cách 172 px (phím cao 144 px).
+         */
+        const val PORTRAIT_NUMBER_ROW = 0.932f
+        /** Thanh gợi ý / công cụ màn hình dọc (dp): mép trên bàn phím trùng Gboard (đo 2026-11-18; trước 48). */
+        const val BAR_DP = 46
+        const val PORTRAIT_BOTTOM_ROW = 1.068f
+        const val PORTRAIT_PAGE_ROWS = 3 + PORTRAIT_NUMBER_ROW + PORTRAIT_BOTTOM_ROW
+        /**
+         * Chiều cao chuẩn để tính cỡ chữ, icon trên phím, so với hàng chữ. Hạ [LANDSCAPE_ROW] 0,11 → 0,10 mà cỡ chữ đã
+         * khớp Gboard: số này tăng cùng tỉ lệ (1,13 × 1,1).
+         */
+        const val LANDSCAPE_TEXT = 1.243f
         /** Cỡ chữ hàng số so với hàng chữ. */
         const val LANDSCAPE_NUMBER_TEXT = 0.88f
     }
@@ -2840,6 +3170,8 @@ class ComposingView(context: Context) : TextView(context) {
         // khi xoá lùi (gỡ chữ, bỏ chốt) vượt qua lằn "…". Bộ gõ ẩn khung kính khi gõ phím hay xoá ký tự thường
         // ([hideLoupe]); hết chữ hay chỗ đó lại thấy được thì ẩn.
         fun hidden(at: Int) = a > 0 && at < a
+        // Còn "…" mà chỉ còn ≤ [LOUPE_AHEAD] lần xoá nữa là hết chữ chọn / âm chốt ([steps]).
+        fun ahead(now: Boolean) = now && a > 0 && steps in 1..LOUPE_AHEAD
         // Mỗi lần xoá, khung gõ có thể dựng lại vài lần (tra gợi ý, cột trái báo âm đã chốt): lần sau không đổi gì thì giữ
         // số đang hiện, kẻo mất số đỏ. Chọn tới thì hết số; gõ phím thì [hideLoupe] đã xoá khung.
         val count = when {
@@ -2867,6 +3199,10 @@ class ComposingView(context: Context) : TextView(context) {
                 targetEnd > lockEnd && hidden(lockEnd) -> showLoupe(full, lockEnd, c, count)
                 end > 0 && hidden(end - 1) -> showLoupe(full, end - 1, c, count)
                 end == 0 && targetEnd == lockEnd && lockEnd > 0 && hidden(0) -> showLoupe(full, 0, c, count)
+                // 4. Xoá lùi khi có "…" mà chỉ còn ≤ [LOUPE_AHEAD] lần xoá: hiện sớm, ở chỗ vừa xoá, dù chỗ đó chưa bị che
+                //    (phần bị che ngắn thì khung kính hiện quá muộn, không kịp thấy đếm ngược; người dùng muốn 2026-11-17).
+                //    Khung gõ dựng lại sau đó (bảng dựng xong, không còn [deleting]) thì giữ, kẻo vừa hiện đã ẩn.
+                ahead(backward || (loupe?.isShowing == true && count > 0)) -> showLoupe(full, aheadAt(end, lockEnd), c, count)
                 else -> hideLoupe()
             }
             // Vừa hết ô vàng (thôi chọn âm ở cột trái), chưa chọn gì: ẩn theo.
@@ -2877,7 +3213,9 @@ class ComposingView(context: Context) : TextView(context) {
         // Khung kính vẫn hiện mà lần này không dựng lại: chép lại chữ mới (màu, ô vàng) cho khớp khung gõ; chỗ đó đã
         // thấy được (không còn sau "…") thì ẩn.
         if (loupeShows == shownBefore && loupe?.isShowing == true && loupeAt >= 0) {
-            if (hidden(loupeAt)) showLoupe(full, loupeAt.coerceAtMost(text.length), c, loupeText?.count ?: 0) else hideLoupe()
+            // Khung kính hiện sớm có số đỏ ([ahead]) thì giữ, dù chỗ đó chưa bị che.
+            val early = ahead((loupeText?.count ?: 0) > 0)
+            if (hidden(loupeAt) || early) showLoupe(full, loupeAt.coerceAtMost(text.length), c, loupeText?.count ?: 0) else hideLoupe()
         }
         windowStart = a
         prefix = if (a > 0) ELLIPSIS.length else 0
@@ -2889,6 +3227,12 @@ class ComposingView(context: Context) : TextView(context) {
         if (text.isNotEmpty()) postDelayed(blink, BLINK_MS)
         invalidate()
     }
+
+    /**
+     * Chỗ khung kính hiện sớm khi xoá lùi ([LOUPE_AHEAD]): chữ Hán chọn sau cùng; chưa chọn chữ thì âm chốt sau cùng (khung
+     * kính hiện nó và âm vừa bỏ chốt sau nó).
+     */
+    private fun aheadAt(end: Int, lockEnd: Int) = if (end > 0) end - 1 else (lockEnd - 1).coerceAtLeast(0)
 
     /** Đoạn [a, b) của [full], thêm "…" ở đầu / cuối nếu còn chữ bị ẩn bên đó. */
     private fun piece(full: CharSequence, a: Int, b: Int): CharSequence {
@@ -3157,6 +3501,8 @@ class ComposingView(context: Context) : TextView(context) {
         const val LOUPE_SCALE = 1.1f
         /** Số đỏ của khung kính cách mép phải (dp). */
         const val COUNT_EDGE_DP = 6f
+        /** Xoá lùi còn chừng này lần nữa là hết chữ chọn / âm chốt thì khung kính hiện sớm (người dùng muốn 2026-11-17). */
+        const val LOUPE_AHEAD = 5
         const val ELLIPSIS = "…"
         /** Cuộn khung gõ về trước: số ký tự vẫn hiện trước con trỏ. */
         const val SCROLL_CONTEXT = 2

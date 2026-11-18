@@ -19,6 +19,8 @@ data class Candidate(
     val phrase: Pair<String, String>? = null,
     /** Chữ Quốc ngữ đúng như khung gõ (bàn phím Hán Nôm kiểu Telex), không phải chữ trong từ điển: chọn thì không học. */
     val literal: Boolean = false,
+    /** Cả cụm Latin (nhiều chữ): không lên thanh gợi ý, đứng ô đầu của bảng thả (người dùng muốn 2026-11-18). */
+    val panelFirst: Boolean = false,
 )
 
 /** Một cặp chữ – âm trong từ điển và độ phổ biến của nó. */
@@ -33,7 +35,9 @@ data class ImportReport(val added: Int, val duplicates: Int, val errors: List<St
  * Lõi gõ dùng chung cho bàn phím và ứng dụng cài đặt (cùng tiến trình).
  * Hán Nôm có nhiều từ điển ([Dictionaries], `files/dicts/nom/`): từ điển mặc định (lần đầu là bản đóng gói sẵn) và
  * các từ điển cá nhân. Khi gõ, lõi dùng bản gộp các từ điển đang bật: mặc định trước, mục trùng ở từ điển sau bỏ qua,
- * không sửa tệp nào. Học thói quen là tăng độ phổ biến (`chữ;âm;số`) ở mọi từ điển đang bật có cặp đó.
+ * không sửa tệp nào. Học thói quen là tăng độ phổ biến (`chữ;âm;số`) ở mọi từ điển đang bật có cặp đó, lưu luôn vào
+ * từ điển. Từ điển mặc định: số gốc là số của bản đóng gói (dict/nomna-dict.txt), phần vượt là phần đã học; khi học quá
+ * nhiều chỉ phần đã học bị chia đôi, không bao giờ xuống dưới số gốc (người dùng muốn 2026-11-17).
  */
 class HanNomEngine private constructor(private val context: Context) {
     /** Bản gộp các từ điển đang bật, để gõ. */
@@ -42,8 +46,10 @@ class HanNomEngine private constructor(private val context: Context) {
     private val parts = HashMap<String, Long>()
     /** Danh sách / nội dung từ điển đã đổi: gộp lại trước lần gõ kế tiếp. */
     private var stale = false
-    /** Các cặp đã chọn khi gõ mà chưa ghi vào từng từ điển. */
-    private val pending = ArrayList<Pair<String, String>>()
+    // Hai biến dưới phải đứng trước `init` (init gọi [rebuild] / [part]).
+    /** Lần gộp gần nhất ([rebuild]): lần tách số gốc của lần gộp cũ thì thôi. */
+    private var rebuildGen = 0
+    private val background = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     init {
         migrateLegacy()
@@ -63,8 +69,13 @@ class HanNomEngine private constructor(private val context: Context) {
         if (prefs.getLong(MERGED_BUILTIN, 0L) == installed) return
         // Chưa có tệp riêng thì đang dùng thẳng bản đóng gói, không cần gộp.
         if (fileOf(DictInfo.DEFAULT_ID).exists()) {
+            // Nạp ([part]) đã tách số gốc theo bản đóng gói: lưu lại thì chữ đã mòn về 0 (bản trước chia đôi cả số gốc)
+            // trở về số của dict/nomna-dict.txt, phần đã học giữ nguyên.
             val h = part(DictInfo.DEFAULT_ID)
-            if (report(NativeCore.dictImport(h, builtinText(), true)).added > 0) save(DictInfo.DEFAULT_ID)
+            // Lưu ngay dưới đây: tách số gốc ngay, không đợi luồng nền ([rebaseLater]). Chỉ một lần mỗi lần cài.
+            NativeCore.rebase(h, builtinText())
+            NativeCore.dictImport(h, builtinText(), true)
+            save(DictInfo.DEFAULT_ID)
         }
         prefs.edit().putLong(MERGED_BUILTIN, installed).apply()
     }
@@ -184,8 +195,12 @@ class HanNomEngine private constructor(private val context: Context) {
     /**
      * Các gợi ý cho [keys] có âm tiết đầu khớp các lựa chọn [picked] của [narrow]. [before]: chữ đã chọn dở, để khi đã
      * chốt âm thì chữ nối tiếp nó thành cụm (政 + tr… → 治) đứng đầu.
+     * Lấy đủ: chọn / chốt tr… là mọi chữ có âm đầu tr (~1.050 chữ), cắt ở 300 thì mất cả 中 (người dùng báo
+     * 2026-11-17).
      */
-    @Synchronized fun candidatesNarrowed(keys: String, picked: List<Pair<Int, String>>, before: String = "", limit: Int = 300): List<Candidate> {
+    @Synchronized fun candidatesNarrowed(
+        keys: String, picked: List<Pair<Int, String>>, before: String = "", limit: Int = NARROWED_LIMIT,
+    ): List<Candidate> {
         fresh()
         return perf("candidatesNarrowed", "$keys $picked") { candidateRecords(NativeCore.candidatesNarrowed(handle, keys, encodePicked(picked), before, limit)) }
     }
@@ -215,9 +230,12 @@ class HanNomEngine private constructor(private val context: Context) {
         if (NativeCore.select(handle, text, reading)) pending.add(text to reading)
     }
 
+    /** Các cặp đã chọn khi gõ mà chưa ghi vào từng từ điển. */
+    private val pending = ArrayList<Pair<String, String>>()
+
     /**
-     * Ghi độ phổ biến đã học vào từng từ điển đang bật có cặp đó (gọi khi đóng bàn phím, không lưu sau mỗi lần
-     * chọn).
+     * Ghi độ phổ biến đã học vào từng từ điển đang bật có cặp đó (học là tăng độ phổ biến lưu luôn vào từ điển; gọi
+     * khi đóng bàn phím, không lưu sau mỗi lần chọn).
      */
     @Synchronized fun saveLearned() {
         if (pending.isEmpty()) return
@@ -267,8 +285,26 @@ class HanNomEngine private constructor(private val context: Context) {
             NativeCore.dictClear(handle)
             return
         }
-        NativeCore.dictLoad(handle, textOf(on[0].id))
-        if (on.size > 1) NativeCore.dictImport(handle, join(on.drop(1).map { textOf(it.id) }), true)
+        val text = perf("rebuild.text") { textOf(on[0].id) }
+        perf("rebuild.load") { NativeCore.dictLoad(handle, text) }
+        if (on.size > 1) perf("rebuild.import") { NativeCore.dictImport(handle, join(on.drop(1).map { textOf(it.id) }), true) }
+        // Số gốc theo bản đóng gói, phần vượt là phần đã học: chia đôi khi học chỉ chia phần đó ([HanNomEngine] đầu lớp).
+        val gen = ++rebuildGen
+        rebaseLater(handle) { gen == rebuildGen }
+    }
+
+
+    /**
+     * Tách số gốc / phần đã học của từ điển [h] theo bản đóng gói ([NativeCore.rebase]) ở luồng nền, nếu [still] còn
+     * đúng. Không đổi độ phổ biến dùng để xếp gợi ý (số gốc + phần đã học), chỉ cần cho lúc chia đôi phần đã học
+     * ([HanNomEngine] đầu lớp), nên khỏi chặn luồng giao diện: làm ngay lúc nạp thì phím đầu tiên sau khi bàn phím khởi
+     * động chờ thêm ~360 ms trên điện thoại (đo 2026-11-18).
+     */
+    private fun rebaseLater(h: Long, still: () -> Boolean) {
+        background.execute {
+            val builtin = builtinText()
+            synchronized(this) { if (still()) perf("rebase (nền)") { NativeCore.rebase(h, builtin) } }
+        }
     }
 
     private fun fileOf(id: String) = Dictionaries.file(context, Lang.NOM, id)
@@ -281,7 +317,11 @@ class HanNomEngine private constructor(private val context: Context) {
 
     /** Từ điển [id], nạp khi cần. */
     private fun part(id: String): Long = parts.getOrPut(id) {
-        NativeCore.create(textOf(id)).also { NativeCore.setOptions(it, 0, false, true, false) }
+        NativeCore.create(textOf(id)).also {
+            NativeCore.setOptions(it, 0, false, true, false)
+            // Từ điển mặc định: số gốc theo bản đóng gói (dict/nomna-dict.txt), phần vượt là phần đã học.
+            if (id == DictInfo.DEFAULT_ID) rebaseLater(it) { parts[id] == it }
+        }
     }
 
     private fun save(id: String) {
@@ -376,6 +416,9 @@ class HanNomEngine private constructor(private val context: Context) {
         if (raw.isEmpty()) emptyList() else raw.split(NativeCore.RS).map { it.split(NativeCore.US) }
 
     companion object {
+        /** Số gợi ý tối đa khi thu hẹp ở cột trái ([candidatesNarrowed]): đủ mọi chữ của một phụ âm đầu. */
+        private const val NARROWED_LIMIT = 10_000
+
         /** Từ điển duy nhất của bản trước khi chia theo ngôn ngữ (xem [migrateToDictionaries]). */
         private const val LEGACY_FILE = "dictionary.txt"
 

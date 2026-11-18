@@ -114,15 +114,10 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         const val WHOLE_FIRST = 3
         /** Đọc chừng này ký tự trước con trỏ để lấy từ đang gõ và các từ trước nó. */
         const val MAX_WORD = 64
-        /**
-         * Cụm Quốc ngữ có độ phổ biến từ chừng này (từ điển `vi`: 1000·log10(1 + số lần trên một tỉ từ), 4000 ≈ 10 lần
-         * trên một triệu từ) thì lựa chọn giữ nguyên Quốc ngữ lên thanh gợi ý.
-         */
-        const val COMMON_WORD = 4000
         /** Cỡ chữ ô nhập toàn màn hình: đo trên Gboard (Realme, 2026-11-10), chữ `đ` cao 50px = 0.676 lần bản 28sp. */
         const val EXTRACT_TEXT_SP = 19f
-        /** Cụm ít gặp: lựa chọn giữ nguyên Quốc ngữ đứng ở vị trí này (thường đã sang bảng gợi ý ⌄). */
-        const val QUOC_NGU_AT = 8
+        /** Mở bảng: chờ lưới dựng xong tối đa chừng này (ms) rồi mới đổi bàn phím sang bảng ([onExpand]). */
+        const val GRID_READY_MS = 300L
         /** Chuỗi phím Hán Nôm dài tới chừng này thì tra gợi ý ngay (vài ms); dài hơn thì tra ở luồng nền. */
         const val SYNC_KEYS = 24
         /** Số lần chọn tối đa khi chốt cả khung gõ bằng chữ Hán Nôm ([commitHanNom]). */
@@ -176,15 +171,22 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         }
     }
 
+    /** TẠM THỜI ([watchFrames]). */
+    private var framesWatched = false
+
     override fun onCreateInputView(): View =
         InputRoot(this, this, this, ::pick, ::onExpand, this, this, this, this).also {
             root = it
+            if (!framesWatched) {
+                framesWatched = true
+                watchFrames(window?.window)
+            }
             // Hệ thống có thể đã chọn chế độ toàn màn hình trước khi tạo view (xoay ngang).
             it.fullscreen = isFullscreenMode
             it.grid.narrow = { picked -> if (keys.isEmpty()) null else engine.narrow(keys.toString(), picked, chosenText) }
             it.grid.narrowed = { picked ->
                 val k = keys.toString()
-                withLockedLatin(engine.candidatesNarrowed(k, picked, chosenText), k, picked)
+                withPointedLatin(engine.candidatesNarrowed(k, picked, chosenText), k, picked)
             }
             // Bảng gọi lõi ở luồng nền: chụp chuỗi phím và chữ đã chọn dở ngay lúc dựng (không đọc [keys] từ luồng nền).
             it.grid.core = {
@@ -192,7 +194,7 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
                 val b = chosenText
                 CandidateGrid.Core(
                     narrow = { picked -> if (k.isEmpty()) null else engine.narrow(k, picked, b) },
-                    narrowed = { picked -> withLockedLatin(engine.candidatesNarrowed(k, picked, b), k, picked) },
+                    narrowed = { picked -> withPointedLatin(engine.candidatesNarrowed(k, picked, b), k, picked) },
                 )
             }
             it.grid.onCoreNeeded = {
@@ -213,11 +215,15 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
             it.grid.typedChunk = { i ->
                 val k = keys.toString()
                 val raw = engine.syllableChunks(k).getOrNull(i)?.let { k.substring(it).replace("'", "") }.orEmpty()
-                // Đoạn có nguyên âm là chữ gõ Telex: hiện như khung gõ (`mieenf` → miền).
-                if (raw.any { it in "aeiouy" }) hanNomComposing(raw).trim() else raw
+                shownChunk(raw)
             }
-            it.grid.typedSyllable = {
-                if (keys.isEmpty()) null else hanNomComposing().trim().substringBefore(' ').lowercase().ifEmpty { null }
+            // Âm đầu theo các đoạn âm của lõi, không theo dấu cách của khung gõ: gõ tắt `tt` (t + t) không có dấu cách nên
+            // cột trái từng có mục chọn nhanh "tt" (người dùng báo 2026-11-18).
+            it.grid.typedSyllable = typed@{
+                if (keys.isEmpty()) return@typed null
+                val k = keys.toString()
+                val first = engine.syllableChunks(k).firstOrNull() ?: return@typed null
+                shownChunk(k.substring(first).replace("'", "")).lowercase().ifEmpty { null }
             }
             // Gần như chữ nào cũng có chữ khác dấu để thu hẹp tới: luôn mở được bảng (khỏi tính cột trái mỗi phím).
             it.bar.canNarrow = { !handwriting }
@@ -225,13 +231,29 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
             it.keyboard.onShiftChange = { if (direct && !handwriting && keys.isEmpty()) refresh() }
             it.onComposeTap = ::onComposeTap
             it.grid.onDelete = ::onDelete
-            it.grid.onNarrowing = narrowing@{ texts ->
+            it.grid.onNarrowing = narrowing@{ texts, latin ->
                 // Bảng đã thu lên (chốt bằng phím cách ngoài bàn phím): thanh do [showLookup] lo.
                 if (!it.bar.expanded) return@narrowing
-                val shown = if (texts == null) candidates else candidates.filter { c -> c.text !in texts }
+                var shown = if (texts == null) candidates else candidates.filter { c -> c.text !in texts }
+                // Chữ Latin theo lựa chọn ở cột trái thay chữ Latin cũ ở ô 2 (gõ `thooi`, chọn t: `t` thay `thôi`).
+                if (latin != null) {
+                    val rest = shown.filter { c -> !(c.literal && !c.panelFirst) && c.text != latin.text }
+                    shown = rest.take(1) + latin + rest.drop(1)
+                }
                 it.bar.showCandidates(shown, null, narrowing = texts != null)
             }
+            it.grid.onBar = singles@{ singles ->
+                if (!it.bar.expanded) return@singles singles
+                it.bar.showCandidates(singles, null, narrowing = true)
+                it.bar.hidden(singles)
+            }
             it.grid.onEnter = ::onEnter
+            // Dấu câu ở cột trái: chốt chữ đang chọn rồi chèn dấu (đã là dấu toàn khổ, không đổi nữa), thu bảng lên.
+            it.grid.onPunctuation = { p ->
+                onChar(p, literal = true)
+                if (it.bar.expanded && keys.isEmpty()) it.bar.expanded = false
+            }
+            it.grid.onPicking = { root?.let(::showComposing) }
             it.grid.onLocks = { labels ->
                 lockLabels = labels
                 root?.let(::showComposing)
@@ -715,9 +737,25 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
             val follow = engine.after(before, k)
             follow + own.filterNot { c -> follow.any { it.text == c.text && it.consumed == c.consumed } }
         }
-        val out = if (telex) withQuocNgu(list, k) else list
+        // Cụm dài nhất (nhiều chữ Hán nhất) đứng đầu, như Gboard: lên thanh cả khi bảng chưa mở, ấn cách chọn nó (người
+        // dùng muốn 2026-11-17). Đang chọn tiếp sau chữ đã chọn dở thì các cụm nối tiếp chữ đó vẫn đứng trước.
+        val ordered = if (before.isEmpty() && k.isNotEmpty()) longestFirst(list, engine.syllableChunks(k).size) else list
+        // Chữ Latin thêm sau khi xếp, để luôn ở vị trí thứ 2 ([withQuocNgu]).
+        val out = if (telex) withQuocNgu(ordered, k) else ordered
         synchronized(lookupCache) { lookupCache[key] = out }
         return out
+    }
+
+    /**
+     * [list] với cụm nhiều chữ Hán nhất đưa lên đầu (bằng nhau thì cụm xếp hạng cao hơn), còn lại giữ thứ tự. Chỉ xét
+     * cụm không dài hơn số âm đã gõ ([syllables]): cụm đoán trước dài hơn (gõ `t` ra cụm 7 chữ) không tính, kẻo đẩy mất
+     * chữ Latin và các chữ của đúng âm đã gõ (người dùng báo 2026-11-17).
+     */
+    private fun longestFirst(list: List<Candidate>, syllables: Int): List<Candidate> {
+        fun han(c: Candidate) = c.text.codePoints().filter { it >= 0x2E80 }.count()
+        val i = list.indices.filter { han(list[it]) <= syllables }.maxByOrNull { han(list[it]) } ?: return list
+        if (i == 0 || han(list[i]) <= han(list[0])) return list
+        return listOf(list[i]) + list.filterIndexed { j, _ -> j != i }
     }
 
     private fun lookupKey(k: String, before: String, telex: Boolean) = "${if (telex) 'T' else 'H'}$before\u0000$k"
@@ -799,6 +837,7 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
             r.grid.syncKeys(k)
             r.grid.selectionQuery()
         } else null
+        val singles = r?.grid?.singleOn == true
         // Bắt đầu tra sau khi giao diện dựng xong lần này (bảng gợi ý gọi lõi ngay trên luồng giao diện, lõi chỉ một
         // việc một lúc): tra trước thì giao diện phải chờ (đo trên điện thoại, chọn 空 khi đã chốt 17 âm: chờ ~45 ms).
         mainHandler.post {
@@ -807,6 +846,7 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
                 if (gen != lookupGen) return@execute
                 val list = runCatching { lookup(k, before, t) }.getOrNull() ?: return@execute
                 val chosen = query?.let { q -> runCatching { engine.candidatesNarrowed(k, q, before) }.getOrNull() }
+                    ?.let { if (singles) r?.grid?.singlesOf(it) ?: it else it }
                 mainHandler.post {
                     if (gen != lookupGen || state != hanNomState || effectiveMode != Mode.HAN_NOM || handwriting) return@post
                     candidates = list
@@ -921,7 +961,16 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
 
     /** Gợi ý cho thanh khi bảng đã thu lên: đang chọn dở ở cột trái thì các chữ khớp phần đó trước. */
     private fun barCandidates(r: InputRoot): List<Candidate> {
-        if (r.bar.expanded || !r.grid.selecting || handwriting) return candidates
+        // Bật 𡨸單 thì thanh vẫn chỉ chữ đơn của âm đầu khi bảng đã thu lên (người dùng muốn 2026-11-17).
+        // Bảng mở mà đã chốt âm: thanh do lưới vẽ (cụm khớp các âm đã chốt, [CandidateGrid.onBar]), không phải
+        // [candidates]; chọn đúng gợi ý đầu đang hiện (chạm dấu câu ở cột trái khi đã chốt hết âm thì ra cụm đầu, người
+        // dùng báo 2026-11-17).
+        if (r.bar.expanded && r.grid.hasLocks && !handwriting) {
+            val first = r.bar.firstShown
+            // Chỉ khi lưới (và thanh nó vẽ) đã dựng cho đúng chuỗi phím này, kẻo chọn gợi ý cũ.
+            if (first != null && r.grid.renderedKeys == keys.toString()) return listOf(first) + candidates
+        }
+        if (r.bar.expanded || !r.grid.filtersBar || handwriting) return candidates
         val cached = selectionCache?.takeIf { (state, query, _) -> state == hanNomState && query == r.grid.selectionQuery() }
         // Đang tra ở luồng nền (phím vừa đổi): giữ các chữ cũ tới khi có kết quả, không tra ngay ở đây.
         val pending = cached == null && candidatesFor != hanNomState
@@ -941,9 +990,16 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
             // Đã chốt âm: các âm đó hiện bằng nhãn, cách nhau bằng dấu cách thường, chỉ tô xanh; con trỏ vẫn dời được
             // như thường ([shownStops]; người dùng muốn 2026-11-14).
             val head = lockedHead()
-            val body = hanNomComposing(afterLocked(keys.toString(), lockLabels.size))
-            val target = targetLength(r, body, lockLabels.size)
-            val caret = snapCaret()
+            var body = hanNomComposing(afterLocked(keys.toString(), lockLabels.size))
+            var target = targetLength(r, body, lockLabels.size)
+            var caret = snapCaret()
+            val picking = if (target > 0) r.grid.pickingLabel else ""
+            if (picking.isNotEmpty()) {
+                // Âm tô vàng theo phần đang chọn dở ở cột trái (`thôi` → `t…`), đổi ngay mỗi lần chọn.
+                body = picking + body.substring(target)
+                if (caret > head.length) caret = if (caret >= head.length + target) caret + picking.length - target else head.length + picking.length
+                target = picking.length
+            }
             // Số đỏ đếm riêng từng loại (người dùng muốn 2026-11-15): số lần xoá nữa còn hoàn tác cùng loại với hành động
             // sau cùng ([undoSteps]); không ghi được hành động thì theo thứ tự cố định của [onDelete].
             val steps = undoSteps() ?: if (chosen.isNotEmpty() && r.grid.lockedAll) chosen.size else lockLabels.size
@@ -951,14 +1007,22 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
                 locked = head.length, target = target, steps = steps)
             return
         }
-        val composed = hanNomComposing()
+        var composed = hanNomComposing()
+        var target = targetLength(r, composed, 0)
+        var caret = snapCaret()
+        val picking = if (target > 0) r.grid.pickingLabel else ""
+        if (picking.isNotEmpty()) {
+            // Âm tô vàng theo phần đang chọn dở ở cột trái (`thôi` → `t…` → `tôi…`), đổi ngay mỗi lần chọn.
+            composed = picking + composed.substring(target)
+            if (caret > 0) caret = if (caret >= target) caret + picking.length - target else picking.length
+            target = picking.length
+        }
         val body = afterChosen(composed, latin = true)
-        val caret = snapCaret()
         // Con trỏ không vào phần đã chọn: xa nhất là ngay sau chữ đã chọn, trước dấu cách sau chữ Latin (`tôi| như`),
         // như chữ Hán (`空|một`; người dùng muốn 2026-11-16).
         val at = if (caret == 0) done.length else done.length + body.length - composed.length + caret
         r.setComposing(done + body + end, chosen = done.length, caret = at, locked = body.length - composed.length,
-            target = targetLength(r, composed, 0), steps = undoSteps() ?: chosen.size)
+            target = target, steps = undoSteps() ?: chosen.size)
     }
 
     /**
@@ -1001,57 +1065,62 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
     }
 
     /**
-     * Bàn phím Hán Nôm kiểu Telex: thêm lựa chọn giữ nguyên chữ Quốc ngữ đang gõ ([k] như khung gõ hiện). Cụm phổ biến
-     * (từ điển `vi`, hay đã học) đứng ngay sau gợi ý đầu, trên thanh; chưa có chữ Hán nào khớp trọn chuỗi phím (chữ
-     * không phải tiếng Việt như `exchanging`, chỉ có gợi ý cho phần đầu) cũng vậy. Còn lại nằm sau, trong bảng gợi ý (⌄).
-     *
-     * Cụm nhiều chữ (đã ấn cách) có thêm lựa chọn giữ nguyên chữ đầu, xếp theo cùng cách: chọn nó thì chữ đó nằm lại
-     * trong khung gõ như chữ đã chọn dở, chọn tiếp chữ Hán cho phần sau (`telex nhanh hơn` → telex rồi 𨀈欣).
+     * Bàn phím Hán Nôm kiểu Telex: thêm lựa chọn giữ nguyên chữ Quốc ngữ đang gõ ([k] như khung gõ hiện; người dùng muốn
+     * 2026-11-18: mọi chữ gõ ra đều có chữ Latin ở vị trí thứ 2):
+     * - chữ Latin của chữ đang được trỏ tới (chưa chốt âm: chữ đầu, `không` của `khoong mootj hai`) ở vị trí thứ 2, ngay
+     *   sau gợi ý đầu; chọn nó thì chữ đó nằm lại trong khung gõ như chữ đã chọn dở, chọn tiếp chữ Hán cho phần sau;
+     * - gõ nhiều chữ (đã ấn cách) thì cả cụm Latin (`không một hai`) không lên thanh, đứng ô đầu của bảng thả
+     *   ([Candidate.panelFirst]).
      */
-    /** Có chữ (giữa hai dấu tách) mà sau một âm có nguyên âm còn đoạn toàn phụ âm (`lag` → la g): không phải tiếng Việt. */
-    private fun foreignWord(k: String): Boolean = k.split('\'').any { seg ->
-        val pieces = engine.displayTelex(seg, settings.toneStyle).split(' ').filter { it.isNotEmpty() }
-        val vowel = { p: String -> untoned(p).lowercase().any { it in "aeiouyăâêôơư" } }
-        pieces.indices.any { i -> i > 0 && !vowel(pieces[i]) && pieces.subList(0, i).any(vowel) }
-    }
-
     private fun withQuocNgu(list: List<Candidate>, k: String): List<Candidate> {
         val out = list.toMutableList()
-        val words = telexWords(k)
-        // Chữ không phải tiếng Việt (`lag` hiện la g: sau âm có nguyên âm còn đoạn toàn phụ âm) thì chữ Latin lên thanh
-        // như khi không chữ Hán nào khớp trọn, kể cả khi câu ghép gõ tắt (痞咦 = la + g) phủ hết phím (người dùng báo
-        // 2026-11-16). Gõ tắt dính liền âm gõ đủ (`twcmieenf`: phụ âm đứng trước) và gõ liền (`chunom`) thì không.
-        val foreign = foreignWord(k)
-        val whole = list.firstOrNull()?.let { it.consumed >= k.trimEnd('\'').length } == true && !foreign
-        addLiteral(out, words.joinToString(" ").trim(), k.length, whole)
-        val first = k.substringBefore('\'')
-        val head = words[0].trim()
-        if (head.isNotEmpty() && words.count { it.isNotBlank() } > 1) {
-            // Có chữ không phải tiếng Việt: cả cụm Latin (`không lag`) đứng trước chữ đầu (`không`), kẻo chữ đầu chiếm chỗ
-            // trên thanh.
-            addLiteral(out, head, first.length, list.any { it.consumed >= first.length }, after = if (foreign) 1 else 0)
-        }
+        val words = telexWords(k).map { it.trim() }
+        val count = words.count { it.isNotEmpty() }
+        val head = words[0]
+        if (head.isEmpty()) return out
+        // Chỉ một chữ: chọn là lấy cả chuỗi phím (cả dấu cách đã ấn sau nó).
+        addLiteral(out, head, if (count == 1) k.length else k.substringBefore('\'').length, at = 1)
+        if (count > 1) addLiteral(out, words.filter { it.isNotEmpty() }.joinToString(" "), k.length, panelFirst = true)
         return out
     }
 
     /**
-     * Đã chốt âm (Telex): thêm lựa chọn chữ Hán của các âm đã chốt rồi giữ nguyên chữ Latin của chữ kế tiếp (đoạn phím
-     * tới lần cách sau), viết liền (`勢時…目標lag`; người dùng muốn 2026-11-15: mọi chữ đều có). Chữ không phải một âm
-     * tiếng Việt (`lag` là la + g) thì đứng gần đầu, lên cả thanh gợi ý; còn lại xếp như [addLiteral]. Chưa chọn phần
-     * nào của âm kế tiếp ở cột trái mới thêm.
+     * Đoạn phím một âm [raw] (không có dấu tách) như khung gõ hiện: có nguyên âm thì ghép Telex (`mieenf` → miền); toàn
+     * phụ âm (gõ tắt) giữ phím, trừ `dd` là đ (người dùng báo 2026-11-17: `‹ dd`, `中央dd`).
      */
-    private fun withLockedLatin(list: List<Candidate>, k: String, picked: List<Pair<Int, String>>): List<Candidate> {
-        val n = picked.count { it.first == CandidateGrid.LOCK_LEVEL }
-        if (!telex || n == 0 || picked.lastOrNull()?.first != CandidateGrid.LOCK_LEVEL) return list
+    private fun shownChunk(raw: String): String =
+        if (raw.any { it in "aeiouy" }) hanNomComposing(raw).trim()
+        else raw.replace("dd", "đ").replace("DD", "Đ").replace("Dd", "Đ").replace("dD", "đ")
+
+    /**
+     * Gợi ý của bảng thả (đã chốt âm / đang chọn ở cột trái / bật 𡨸單): thêm chữ Latin của âm đang được trỏ tới ở vị trí
+     * thứ 2 (người dùng muốn 2026-11-18), viết liền sau chữ Hán của các âm đã chốt (`勢時…目標lag`):
+     * - chưa chọn gì ở cột trái cho âm đó: cả chữ đã gõ (đoạn phím tới lần cách sau);
+     * - đã chọn ở cột trái: theo các lựa chọn đó ([adjustedLatin]: đổi `trung` sang ch là `chung`, chọn thanh là `chúng`).
+     * Còn nhiều chữ phía sau thì cả cụm Latin đứng ô đầu của bảng thả ([Candidate.panelFirst]).
+     */
+    private fun withPointedLatin(list: List<Candidate>, k: String, picked: List<Pair<Int, String>>): List<Candidate> {
+        if (!telex || k.isEmpty()) return list
+        val lockAt = picked.indices.filter { picked[it].first == CandidateGrid.LOCK_LEVEL }
         val chunks = engine.syllableChunks(k)
-        if (chunks.size <= n) return list
+        if (chunks.isEmpty()) return list
+        // Âm đang trỏ tới: âm đầu chưa chốt; chốt hết rồi thì âm chốt sau cùng, theo lựa chọn lúc chốt nó (người dùng báo
+        // 2026-11-18: gõ `thooi`, chốt âm thì chữ Latin `thôi` phải ở ô 2 của thanh, không nằm cuối lưới).
+        val n = minOf(lockAt.size, chunks.size - 1)
+        // Chỉ lựa chọn của âm đã chốt mới đổi chữ Latin: chạm t ở cột trái thì ô 2 vẫn là `thôi`, chốt âm ở `t…` rồi mới
+        // thành `t` (người dùng muốn 2026-11-18).
+        val current = if (n < lockAt.size) {
+            picked.subList(if (n == 0) 0 else lockAt[n - 1] + 1, lockAt[n])
+        } else {
+            emptyList()
+        }
         fun endOf(i: Int): Int {
             var e = chunks[i].last + 1
             while (e < k.length && k[e] == '\'') e++
             return e
         }
         // Chữ của các âm đã chốt: n chữ đầu của gợi ý tốt nhất phủ hết các âm đó (mỗi chữ một âm).
-        val head = list.firstNotNullOfOrNull { c ->
+        val head = if (n == 0) Candidate("", "", 0) else list.firstNotNullOfOrNull { c ->
             val chars = c.text.codePoints().toArray()
             val words = c.reading.split(' ')
             if (c.literal || c.consumed < endOf(n - 1) || chars.size != words.size || words.size < n) null
@@ -1059,27 +1128,48 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         } ?: return list
         val start = chunks[n].first
         val wordEnd = k.indexOf('\'', start).let { if (it < 0) k.length else it }
-        val word = k.substring(start, wordEnd)
-        val latin = if (word.any { it in "aeiouy" }) hanNomComposing(word).trim() else word
+        val (latin, consumed) = if (current.isEmpty()) {
+            var e = wordEnd
+            while (e < k.length && k[e] == '\'') e++
+            shownChunk(k.substring(start, wordEnd)) to e
+        } else {
+            adjustedLatin(shownChunk(k.substring(chunks[n]).replace("'", "")), current) to endOf(n)
+        }
         if (latin.isEmpty()) return list
-        var consumed = wordEnd
-        while (consumed < k.length && k[consumed] == '\'') consumed++
-        val text = head.text + latin
-        if (list.any { it.text == text }) return list
-        val syllable = engine.syllableChunks(word).size == 1 && word.any { it in "aeiouy" }
-        val common = (viWords.frequency(latin) ?: -1) >= COMMON_WORD
-        val at = if (!syllable || common) 1 else QUOC_NGU_AT
         val out = list.toMutableList()
-        out.add(at.coerceAtMost(out.size), Candidate(text, "${head.reading} $latin", consumed, literal = true))
+        addLiteral(out, head.text + latin, consumed, at = 1, reading = "${head.reading} $latin".trim())
+        val rest = telexWords(k.substring(start)).map { it.trim() }.filter { it.isNotEmpty() }
+        if (rest.size > 1) {
+            val phrase = rest.joinToString(" ")
+            addLiteral(out, head.text + phrase, k.length, reading = "${head.reading} $phrase".trim(), panelFirst = true)
+        }
         return out
     }
 
-    /** Thêm lựa chọn giữ nguyên Quốc ngữ [text] cho [consumed] phím đầu vào [out] (xem [withQuocNgu]). */
-    private fun addLiteral(out: MutableList<Candidate>, text: String, consumed: Int, covered: Boolean, after: Int = 0) {
+    /**
+     * Chữ Latin của âm [typed] (như khung gõ hiện) sau các lựa chọn [picks] ở cột trái: chọn cả âm (tới thanh) thì đúng
+     * âm đó; chọn chưa hết âm thì chỉ là các phần đã chọn, thay cho cả âm đã gõ (người dùng muốn 2026-11-18: gõ `thooi`,
+     * chọn t rồi dừng ở `t…` thì chữ Latin là `t`, không phải `tôi`; thay quy tắc cũ `trung` chọn ch → `chung`).
+     */
+    private fun adjustedLatin(typed: String, picks: List<Pair<Int, String>>): String {
+        fun pick(part: Int) = picks.lastOrNull { it.first == part }?.second
+        val result = pick(CandidateGrid.PART_SYLLABLE)
+            ?: (pick(CandidateGrid.PART_INITIAL).orEmpty() +
+                (pick(CandidateGrid.PART_NUCLEUS) ?: pick(CandidateGrid.PART_VOWEL)).orEmpty() +
+                pick(CandidateGrid.PART_FINAL).orEmpty())
+        return if (typed.firstOrNull()?.isUpperCase() == true) result.replaceFirstChar { it.uppercaseChar() } else result
+    }
+
+    /**
+     * Thêm lựa chọn giữ nguyên Quốc ngữ [text] cho [consumed] phím đầu vào [out]: ở vị trí [at] (vị trí thứ 2 là 1), hay
+     * cuối danh sách khi [panelFirst] (cả cụm Latin, ô đầu bảng thả). Đã có chữ y hệt thì thôi.
+     */
+    private fun addLiteral(
+        out: MutableList<Candidate>, text: String, consumed: Int, at: Int = out.size, reading: String = text,
+        panelFirst: Boolean = false,
+    ) {
         if (text.isEmpty() || out.any { it.text == text }) return
-        val common = (viWords.frequency(text.trim()) ?: -1) >= COMMON_WORD
-        val at = (if (common || !covered) 1 else QUOC_NGU_AT) + after
-        out.add(at.coerceAtMost(out.size), Candidate(text, text, consumed, literal = true))
+        out.add(at.coerceAtMost(out.size), Candidate(text, reading, consumed, literal = true, panelFirst = panelFirst))
     }
 
     private fun refresh() {
@@ -1463,6 +1553,7 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
             ToolId.RESIZE -> root?.showResize(true)
             ToolId.ONE_HAND -> onOneHand(if (settings.oneHand == OneHand.OFF) OneHand.LEFT else OneHand.OFF)
             ToolId.TEXT_EDIT -> openTextEdit()
+            ToolId.LANGUAGE -> onModeTap()
             ToolId.SETTINGS -> openSettings()
         }
     }
@@ -1513,6 +1604,10 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         val clip = clipboardManager.primaryClip ?: return@runCatching false
         clip.itemCount > 0 && !clip.getItemAt(0).coerceToText(this).isNullOrEmpty()
     }.getOrDefault(false)
+
+    override fun onEditClose() {
+        root?.showTextEdit(false)
+    }
 
     override fun onEditAction(action: EditAction, selecting: Boolean) {
         val ic = currentInputConnection ?: return
@@ -1832,19 +1927,27 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         val r = root ?: return
         r.grid.filters = !handwriting
         if (show) {
-            r.grid.show(freshCandidates(), r.bar.hiddenFor(candidates), keys.toString())
+            // Bàn phím còn hiện tới khi lưới dựng xong, rồi mới đổi sang bảng (không thấy bảng lấp dần; người dùng báo
+            // 2026-11-17). Dự phòng: quá [GRID_READY_MS] mà chưa xong thì vẫn mở.
+            r.prepareGrid()
+            val open = { if (r.bar.expanded) r.showGrid(true) }
+            r.grid.onReady = open
+            mainHandler.postDelayed({ if (r.grid.onReady === open) { r.grid.onReady = null; open() } }, GRID_READY_MS)
+            r.grid.show(freshCandidates(), r.bar.hiddenFor(candidates), keys.toString(), opening = true)
             prefetchLock(r)
+        } else {
+            r.grid.onReady = null
+            // Thu bảng lên lúc đang chọn dở: phần chọn dở vẫn giữ, thanh hiện các chữ khớp nó ([barCandidates]); không
+            // chọn dở thì thanh hiện lại đủ gợi ý.
+            if (r.grid.narrowing || r.grid.selecting) r.bar.showCandidates(barCandidates(r), null, narrowing = r.grid.selecting)
         }
-        // Thu bảng lên lúc đang chọn dở: phần chọn dở vẫn giữ, thanh hiện các chữ khớp nó ([barCandidates]); không
-        // chọn dở thì thanh hiện lại đủ gợi ý.
-        else if (r.grid.narrowing || r.grid.selecting) r.bar.showCandidates(barCandidates(r), null, narrowing = r.grid.selecting)
         // Các âm đã chốt còn hiện khi bảng thu lên; nền vàng thì chỉ khi bảng mở (2026-11-15).
         val labels = if (show || r.grid.selecting) r.grid.lockLabels else emptyList()
         if (labels != lockLabels || (!direct && !handwriting && keys.isNotEmpty())) {
             lockLabels = labels
             showComposing(r)
         }
-        r.showGrid(show)
+        if (!show) r.showGrid(false)
     }
 
     // ---- Viết tay ----
@@ -1982,7 +2085,9 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
 
     // ---- KeyboardView.Listener ----
 
-    override fun onChar(text: String, literal: Boolean) {
+    override fun onChar(text: String, literal: Boolean) = perf("onChar", "$text keys=${keys.length}") { onCharTimed(text, literal) }
+
+    private fun onCharTimed(text: String, literal: Boolean) {
         commitHandwriting()
         val c = text.singleOrNull()
         val composable = effectiveMode != Mode.ENGLISH && c != null &&
@@ -2275,8 +2380,64 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         }
         val ic = currentInputConnection ?: return
         val selected = ic.getSelectedText(0)
+        if (selected.isNullOrEmpty() && reopenWord(ic)) return
         if (selected.isNullOrEmpty()) sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL) else ic.commitText("", 1)
         updateShift()
+    }
+
+    /**
+     * Quốc ngữ (Telex): xoá dấu cách ngay sau một chữ (đã ấn cách, hay chọn gợi ý tự thêm cách) thì mở lại chữ đó để gõ
+     * tiếp dấu (`tô`, cách, xoá, `s` → tố; người dùng báo 2026-11-17: không quay lại gõ dấu được). Chữ đổi ngược ra phím
+     * Telex ([telexKeysOf]) mà dựng lại không đúng chữ đó thì thôi, xoá như thường.
+     */
+    private fun reopenWord(ic: InputConnection): Boolean {
+        if (!direct || handwriting || keys.isNotEmpty()) return false
+        val before = ic.getTextBeforeCursor(MAX_WORD + 1, 0)?.toString() ?: return false
+        if (!before.endsWith(' ') || before.endsWith("  ")) return false
+        val body = before.dropLast(1)
+        val word = body.takeLastWhile { it.isLetter() }
+        if (word.isEmpty() || (word.length < body.length && !body[body.length - word.length - 1].isWhitespace())) return false
+        val k = telexKeysOf(word) ?: return false
+        if (composeWord(k) != word) return false
+        ic.deleteSurroundingText(1, 0)
+        keys.clear()
+        keys.append(k)
+        typed = word
+        refresh()
+        return true
+    }
+
+    /**
+     * Phím Telex của chữ Quốc ngữ [word] (`tốn` → `toons`): dấu mũ gõ đôi chữ cái, dấu trăng / móc là `w`, đ là `dd`, thanh
+     * gõ cuối chữ. `null` nếu có ký tự không đổi được.
+     */
+    private fun telexKeysOf(word: String): String? {
+        val out = StringBuilder()
+        var tone: Char? = null
+        for (ch in word) {
+            if (ch == 'đ' || ch == 'Đ') {
+                out.append(if (ch == 'Đ') "DD" else "dd")
+                continue
+            }
+            val parts = java.text.Normalizer.normalize(ch.toString(), java.text.Normalizer.Form.NFD)
+            val base = parts[0]
+            if (base !in 'a'..'z' && base !in 'A'..'Z') return null
+            out.append(base)
+            for (m in parts.drop(1)) {
+                when (m) {
+                    '̂' -> out.append(base)
+                    '̆', '̛' -> out.append(if (base.isUpperCase()) 'W' else 'w')
+                    '́' -> tone = 's'
+                    '̀' -> tone = 'f'
+                    '̉' -> tone = 'r'
+                    '̃' -> tone = 'x'
+                    '̣' -> tone = 'j'
+                    else -> return null
+                }
+            }
+        }
+        tone?.let(out::append)
+        return out.toString()
     }
 
     /**

@@ -159,19 +159,29 @@ class WordStore(private val context: Context, private val info: DictInfo) : Dict
         else if (info.isDefault) parse(builtin(context, info.lang)) else LinkedHashMap()
 
     private fun save() {
+        index = null
         file.writeText(words.entries.joinToString("") { "${it.key};${it.value}\n" })
         Dictionaries.changed(context, info.lang)
     }
 
     override fun count() = words.size
 
+    /**
+     * Mọi mục xếp a → z, kèm khoá bỏ dấu ([WordDict.fold]) tính sẵn một lần; sửa từ điển thì tính lại. Trước đây mỗi
+     * lần so sánh khi xếp đều bỏ dấu lại cả hai từ: mở từ điển tiếng Anh xếp mất ~0,8 giây trên máy ảo, mỗi chữ gõ vào
+     * ô tìm cũng xếp lại.
+     */
+    private var index: List<Pair<String, DictRow>>? = null
+
+    private fun index() = index ?: words.entries
+        .map { WordDict.fold(it.key) to DictRow(it.key, "", it.value) }
+        .sortedWith(compareBy<Pair<String, DictRow>> { it.first }.thenBy { it.second.text })
+        .also { index = it }
+
     override fun rows(query: String): List<DictRow> {
         val q = WordDict.fold(query.trim())
-        return words.entries.asSequence()
-            .filter { q.isEmpty() || WordDict.fold(it.key).contains(q) }
-            .map { DictRow(it.key, "", it.value) }
-            .sortedWith(compareBy<DictRow> { WordDict.fold(it.text) }.thenBy { it.text })
-            .toList()
+        val all = index()
+        return if (q.isEmpty()) all.map { it.second } else all.filter { it.first.contains(q) }.map { it.second }
     }
 
     override fun put(old: DictRow?, text: String, readings: String, freq: Int): String? {
@@ -258,9 +268,24 @@ class WordStore(private val context: Context, private val info: DictInfo) : Dict
         fun builtin(context: Context, lang: Lang): String =
             runCatching { context.assets.open("dict/${lang.code}.txt").bufferedReader().use { it.readText() } }.getOrDefault("")
 
+        private val SPACES = Regex("\\s+")
+
         /** Từ viết liền một dấu cách giữa các chữ, NFC. */
-        fun clean(raw: String): String =
-            Normalizer.normalize(raw.trim().split(Regex("\\s+")).joinToString(" "), Normalizer.Form.NFC)
+        fun clean(raw: String): String {
+            val t = raw.trim()
+            // Đường nhanh (gần như mọi dòng của tệp): đã đúng dạng thì giữ nguyên, khỏi tách bằng regex.
+            var prevSpace = false
+            var tidy = true
+            for (c in t) {
+                val space = c.isWhitespace()
+                if (space && (c != ' ' || prevSpace)) { tidy = false; break }
+                prevSpace = space
+            }
+            if (tidy && Normalizer.isNormalized(t, Normalizer.Form.NFC)) return t
+            return Normalizer.normalize(t.split(SPACES).joinToString(" "), Normalizer.Form.NFC)
+        }
+
+        private fun isSeparator(c: Char) = c == ';' || c == '\t' || c == ','
 
         /** `từ;số` mỗi dòng (cũng nhận tab hay dấu phẩy); dòng `#` bỏ qua, từ trùng lấy lần đầu. */
         fun parse(text: String): LinkedHashMap<String, Int> {
@@ -268,10 +293,14 @@ class WordStore(private val context: Context, private val info: DictInfo) : Dict
             for (raw in text.lineSequence()) {
                 val line = raw.trim()
                 if (line.isEmpty() || line.startsWith("#")) continue
-                val parts = line.split(';', '\t', ',')
-                val word = clean(parts[0])
+                val cut = line.indexOfFirst(::isSeparator)
+                val word = clean(if (cut < 0) line else line.substring(0, cut))
                 if (word.isEmpty() || word in out) continue
-                out[word] = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: 0
+                out[word] = if (cut < 0) 0 else {
+                    var end = cut + 1
+                    while (end < line.length && !isSeparator(line[end])) end++
+                    line.substring(cut + 1, end).trim().toIntOrNull() ?: 0
+                }
             }
             return out
         }

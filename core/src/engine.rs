@@ -1482,6 +1482,23 @@ impl Engine {
         let mut locked_seen: std::collections::HashMap<String, Option<usize>> = std::collections::HashMap::new();
         // Đoạn âm thứ i chỉ là phím `w` (âm bắt đầu bằng ư), cho [`part_matches_at`].
         let w_at = self.w_chunks(&chars, k + 1);
+        // Âm đã chốt mà chưa chọn phụ âm đầu ở cột trái (chốt theo phím đã gõ): đúng âm đã gõ ([`Self::locked_matcher`]).
+        let chunks = self.syllable_chunks(keys);
+        let lock_segs: Vec<Option<Vec<char>>> = locks
+            .iter()
+            .enumerate()
+            .map(|(i, lock)| {
+                if lock.iter().any(|(p, _)| *p == Part::Initial) {
+                    return None;
+                }
+                chunks.get(i).map(|&(s, e)| {
+                    let raw: Vec<char> = chars[s..e].iter().map(|&c| text::lower(c)).collect();
+                    if raw == ['d', 'd'] { vec!['đ'] } else { raw }
+                })
+            })
+            .collect();
+        let lock_match: Vec<Option<Box<dyn Fn(&str) -> bool + '_>>> =
+            lock_segs.iter().map(|s| s.as_ref().map(|seg| self.locked_matcher(seg))).collect();
         // Lọc từng nguồn: tách âm lần lượt, âm nào không khớp thì bỏ chữ đó ngay (nguồn có cả nghìn cụm, phần lớn hỏng
         // ngay âm đầu).
         let mut collect = |source: &[(Candidate, u32, Rank)], swapped: bool, follow: bool, rows: &mut Vec<_>| {
@@ -1512,7 +1529,10 @@ impl Engine {
                         let mut l = 0;
                         let mut words = head.split(' ');
                         let ok = locks.iter().enumerate().all(|(i, want)| {
-                            words.next().and_then(syllable_split).is_some_and(|parts| fits(i, want, &parts, &mut l))
+                            words.next().is_some_and(|w| {
+                                lock_match[i].as_ref().is_none_or(|m| m(w))
+                                    && syllable_split(w).is_some_and(|parts| fits(i, want, &parts, &mut l))
+                            })
                         });
                         let r = ok.then_some(l);
                         locked_seen.insert(head.to_string(), r);
@@ -1562,6 +1582,7 @@ impl Engine {
             .get(k)
             .is_some_and(|&(s, e)| chars[s..e].iter().any(|c| "aeiouy".contains(text::lower(*c))));
         let (composed, composed_swapped, full) = self.locked_composed(&chars, locks, picked);
+        let built = rows.len();
         collect(&full, false, false, &mut rows);
         let ranked = rows.len();
         collect(&composed, false, false, &mut rows);
@@ -1569,6 +1590,15 @@ impl Engine {
         for row in &mut rows[ranked..] {
             if !(specific && row.1.is_some()) {
                 row.6 += 1 << 24;
+            }
+        }
+        // Câu ghép không phải một mục có sẵn trong từ điển: đánh dấu `joined` (như câu ghép khi gõ thường), để bảng gợi
+        // ý bỏ đi (người dùng muốn 2026-11-17: bảng không hiện cụm không có trong từ điển). Chỉ đánh dấu ở kết quả, sau
+        // khi lọc nguồn (nguồn bỏ qua mục `joined`). Chữ một âm là chữ có trong từ điển, không đánh dấu; cụm trùng một
+        // mục có sẵn thì đã lấy từ nguồn trước (bỏ trùng theo chữ + âm).
+        for row in &mut rows[built..] {
+            if row.0.reading.contains(' ') {
+                row.0.joined = true;
             }
         }
         rows.sort_by(|a, b| {
@@ -1710,7 +1740,7 @@ impl Engine {
                     // Âm đã chốt chưa chọn phụ âm đầu: theo phím của đoạn đó; đã chọn thì lựa chọn quyết định (locked_rows).
                     let readings: Vec<&str> = e.reading.split(' ').collect();
                     let locked_ok = locks.iter().enumerate().all(|(i, lock)| {
-                        lock.iter().any(|(p, _)| *p == Part::Initial) || self.chunk_matches(&letters(&chunks[i]), readings[i])
+                        lock.iter().any(|(p, _)| *p == Part::Initial) || self.locked_matcher(&letters(&chunks[i]))(readings[i])
                     });
                     let rest_ok = rest.iter().enumerate().all(|(j, seg)| (swap && j == 0) || self.chunk_matches(seg, readings[k + j]));
                     if !locked_ok || !rest_ok {
@@ -1737,6 +1767,36 @@ impl Engine {
     /// toàn phụ âm như gõ tắt ([`plain_segment`]).
     fn chunk_matches(&self, seg: &[char], reading: &str) -> bool {
         self.chunk_matcher(seg)(reading)
+    }
+
+    /// Như [`Self::chunk_matcher`] cho âm đã chốt mà chưa chọn gì ở cột trái (chốt theo phím đã gõ): đoạn có nguyên âm
+    /// là đúng âm đã gõ, kể cả thanh (`tooi` chốt là tôi, không tồi, tối); chỉ khi âm gõ chưa có phụ âm cuối thì nhận
+    /// thêm phụ âm cuối, cùng thanh (`too`: tô, tôn, tông…; người dùng muốn 2026-11-17). Đoạn toàn phụ âm (gõ tắt)
+    /// như cũ.
+    fn locked_matcher<'s>(&self, seg: &'s [char]) -> Box<dyn Fn(&str) -> bool + 's> {
+        if !seg.iter().any(|c| "aeiouy".contains(*c)) {
+            return Box::new(self.chunk_matcher(seg));
+        }
+        let typed = self.compose(&seg.iter().collect::<String>()).to_lowercase();
+        let split = |s: &str| -> (Vec<char>, Tone) {
+            let chars: Vec<(char, Tone)> = s.chars().map(|c| text::split_tone(text::lower(c))).collect();
+            let tone = chars.iter().map(|&(_, t)| t).find(|&t| t != Tone::Level).unwrap_or(Tone::Level);
+            (chars.into_iter().map(|(c, _)| c).collect(), tone)
+        };
+        let (letters, tone) = split(&typed);
+        // Chưa thành âm đúng chính tả (gõ dở, thiếu dấu phụ: `mien`, `tuong`): khớp lỏng như cũ.
+        if !syllable::check(&letters, tone, Check::Strict) {
+            return Box::new(self.chunk_matcher(seg));
+        }
+        let open = letters.last().is_some_and(|&c| text::is_vowel(c));
+        Box::new(move |reading: &str| {
+            let (r, t) = split(reading);
+            if t != tone || !r.starts_with(&letters) {
+                return false;
+            }
+            let rest = &r[letters.len()..];
+            rest.is_empty() || (open && rest.iter().all(|&c| "cghmnpt".contains(c)))
+        })
     }
 
     /// Phần đầu khoá tra bỏ dấu ([`Dictionary::lookup_prefix`]) mà mọi âm đọc khớp đoạn phím `seg`
@@ -1834,7 +1894,8 @@ impl Engine {
                 if j - i == 1 { self.dict.lookup_prefix(&initials).collect() } else { self.dict.lookup_initials(&initials).collect() };
             let mut top: Vec<((usize, std::cmp::Reverse<u32>, usize), &Entry)> = Vec::new();
             let segs: Vec<Vec<char>> = chunks[i..j].iter().map(|c| letters(c)).collect();
-            let matchers: Vec<_> = segs.iter().map(|seg| self.chunk_matcher(seg)).collect();
+            // Âm đã chốt theo phím đã gõ: đúng âm đó ([`Self::locked_matcher`]).
+            let matchers: Vec<_> = segs.iter().map(|seg| self.locked_matcher(seg)).collect();
             for (order, e) in entries {
                 if dict::is_shortcut(&e.reading) {
                     continue;
@@ -3433,9 +3494,26 @@ mod tests {
         e.options.telex = true;
         let locks = vec![Vec::new(); 3];
         let texts: Vec<String> = e.candidates_locked("langw'bacs'hoof", "", &locks, &[]).into_iter().map(|c| c.text).collect();
-        assert!(texts.contains(&"陵北胡".to_string()), "{texts:?}");
+        // Chốt theo phím đã gõ là đúng âm đó (2026-11-17): `bacs` là bác (伯), không bắc (北).
+        assert!(texts.contains(&"陵伯胡".to_string()), "{texts:?}");
+        assert!(!texts.iter().any(|t| t.contains('北')), "{texts:?}");
         // Các cách ghép tốt nhất vẫn đứng trước.
-        assert_eq!(texts[0], "𢠯北胡");
+        assert_eq!(texts[0], "𢠯伯胡");
+    }
+
+    #[test]
+    fn locked_syllable_is_exact() {
+        // Chốt `tooi` (chưa chọn gì ở cột trái) là đúng tôi, không tồi, tối; âm chưa có phụ âm cuối (`too`) thì nhận thêm
+        // phụ âm cuối, cùng thanh: tô, tôn, không tố, tốt (người dùng muốn 2026-11-17).
+        let mut e = Engine::new(Dictionary::from_text("碎;tôi;9\n最;tối;9\n頹;tồi;9\n蘇;tô;9\n孫;tôn;9\n素;tố;9\n卒;tốt;9\n家;nhà;9\n").0);
+        e.options.telex = true;
+        let one = vec![Vec::new(); 1];
+        let toi: Vec<String> = e.candidates_locked("tooi'nhaf", "", &one, &[]).into_iter().map(|c| c.text).collect();
+        assert!(toi.iter().any(|t| t.starts_with('碎')), "{toi:?}");
+        assert!(!toi.iter().any(|t| t.starts_with('最') || t.starts_with('頹')), "{toi:?}");
+        let to: Vec<String> = e.candidates_locked("too'nhaf", "", &one, &[]).into_iter().map(|c| c.text).collect();
+        assert!(to.iter().any(|t| t.starts_with('蘇')) && to.iter().any(|t| t.starts_with('孫')), "{to:?}");
+        assert!(!to.iter().any(|t| t.starts_with('素') || t.starts_with('卒')), "{to:?}");
     }
 
     #[test]

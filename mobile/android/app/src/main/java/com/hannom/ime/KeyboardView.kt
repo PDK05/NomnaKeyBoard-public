@@ -75,7 +75,8 @@ class KeyboardView(context: Context, private val listener: Listener, private val
      * phím cao thêm, chữ giữ cỡ (như Gboard); hàng thấp hơn chuẩn (xoay ngang) thì chữ nhỏ lại cho vừa phím.
      */
     private val textRow get() =
-        if (landscape) minOf(rowHeight, landscapeDefaultRow) * InputRoot.LANDSCAPE_TEXT else minOf(rowHeight, context.dp(TEXT_ROW_DP))
+        if (landscape) minOf(rowHeight, landscapeDefaultRow) * InputRoot.LANDSCAPE_TEXT
+        else context.dp(TEXT_ROW_DP) * minOf(1f, rowHeight / context.dp(Settings.ROW_HEIGHTS[1].toFloat()))
 
     /** Màn hình ngang: chiều cao hàng chữ mặc định (px); kéo bàn phím cao hơn thì chữ giữ cỡ như màn hình dọc. */
     var landscapeDefaultRow = 0f
@@ -167,17 +168,20 @@ class KeyboardView(context: Context, private val listener: Listener, private val
     private val icons = HashMap<Int, Drawable>()
     private val radius = context.dp(7f)
     private val gapX = context.dp(5f)
-    private val gapY = context.dp(9f)
+    /** Khe giữa các hàng (màn hình dọc): 8 dp như Gboard (đo trên điện thoại 2026-11-18: 28 px ở 3,5 px/dp). */
+    private val gapY = context.dp(8f)
     /** Lề trên và dưới khối phím; màn hình ngang sát hơn để hàng phím đầu nằm đúng chỗ như Gboard. */
     private val padTop get() = context.dp(if (landscape) 0.5f else 2f)
     private val landscapeGapY = context.dp(InputRoot.LANDSCAPE_GAP_Y)
     private val rowGap get() = if (landscape) landscapeGapY else gapY
-    /** Trang 5 hàng ở màn hình ngang: hàng số trên cùng thấp hơn hàng chữ (như Gboard). */
-    private val shortNumberRow get() = landscape && rows.size == Layouts.MAX_ROWS
+    /** Trang 5 hàng: hàng số trên cùng thấp hơn hàng chữ (như Gboard, cả hai chiều màn hình). */
+    private val shortNumberRow get() = rows.size == Layouts.MAX_ROWS
+    /** Hàng số so với hàng chữ, và hàng phím cách so với hàng chữ (đo trên Gboard). */
+    private val numberRow get() = if (landscape) InputRoot.LANDSCAPE_NUMBER_ROW else InputRoot.PORTRAIT_NUMBER_ROW
     /** Chiều cao hàng phím cách (cả khe). */
-    private val bottomRow get() = if (landscape) rowHeight * InputRoot.LANDSCAPE_BOTTOM_ROW else rowHeight
+    private val bottomRow get() = rowHeight * if (landscape) InputRoot.LANDSCAPE_BOTTOM_ROW else InputRoot.PORTRAIT_BOTTOM_ROW
     /** Chiều cao phần phía trên hàng phím cách ở trang 5 hàng. */
-    private val rowsAbove get() = rowHeight * if (landscape) InputRoot.LANDSCAPE_NUMBER_ROW + 3 else Layouts.MAX_ROWS - 1f
+    private val rowsAbove get() = rowHeight * (numberRow + 3)
     /** Chiều cao các hàng trên hàng phím cách ở trang đang hiện; trang ít hàng thì phím cao hơn. */
     private var pageRowHeight = rowHeight
 
@@ -315,12 +319,15 @@ class KeyboardView(context: Context, private val listener: Listener, private val
         val left = if (landscape) insetLeft else gapX / 2
         val unit = if (landscape) (width - insetLeft - insetRight) / 10f else (width - gapX) / 10f
         val gap = rowGap
+        // Màn hình dọc: ba hàng số sát nhau hơn trang chữ, khe 6 dp, phím cao hơn (Gboard, đo 2026-11-18: phím 190 px,
+        // bước 211 px); hàng dưới cùng như trang chữ.
+        val numGap = if (landscape) gap else context.dp(NUMPAD_GAP_DP)
         pageRowHeight = (height - padTop * 2 - bottomRow) / 3
         var top = padTop + gap / 2
         val railTop = top
         rows.forEachIndexed { r, row ->
             val last = r == rows.lastIndex
-            val h = (if (last) bottomRow else pageRowHeight) - gap
+            val h = if (last) bottomRow - gap else pageRowHeight - numGap
             var x = if (last) left else left + unit * row.first().weight
             row.filterNot { it.rail }.forEach { k ->
                 val w = unit * k.weight
@@ -330,7 +337,7 @@ class KeyboardView(context: Context, private val listener: Listener, private val
             top += if (last) bottomRow else pageRowHeight
         }
         railKeys = rows.flatten().filter { it.rail }
-        val railBottom = railTop + 3 * pageRowHeight - gap
+        val railBottom = railTop + 3 * pageRowHeight - numGap
         numpadRail.set(left + gapX / 2, railTop, left + unit * railKeys.first().weight - gapX / 2, railBottom)
         railViewport.set(numpadRail.left, numpadRail.top + railPad, numpadRail.right, numpadRail.bottom - railPad)
         // Chưa đo xong (height = 0, như khi xoay ngang rồi mở ngay ô số) thì vùng cột âm:
@@ -403,13 +410,15 @@ class KeyboardView(context: Context, private val listener: Listener, private val
         // Chỉ một hàng (viết tay): hàng đó nằm ở đáy như hàng phím cách của trang chữ.
         val above = height - padTop * 2 - bottomRow
         pageRowHeight = if (rows.size > 1) above / (rows.size - 1) else above
-        val keyHeight = maxOf(rowHeight - gap, pageRowHeight / 1.3f)
+        // Trang ít hàng (?123, =\<): phím cao bằng bước hàng / 1,4 ở màn hình dọc như Gboard (đo 2026-11-18: phím 151 px,
+        // bước 211 px); ngang giữ 1,3.
+        val keyHeight = maxOf(rowHeight - gap, pageRowHeight / if (landscape) 1.3f else 1.4f)
         var top = padTop + gap / 2 + if (rows.size > 1) 0f else pageRowHeight
         rows.forEachIndexed { r, row ->
             val pitch = when {
                 r == rows.lastIndex -> bottomRow
                 !shortNumberRow -> pageRowHeight
-                r == 0 -> rowHeight * InputRoot.LANDSCAPE_NUMBER_ROW
+                r == 0 -> rowHeight * numberRow
                 else -> rowHeight
             }
             val h = if (r == rows.lastIndex || shortNumberRow) pitch - gap else keyHeight
@@ -523,13 +532,16 @@ class KeyboardView(context: Context, private val listener: Listener, private val
             labelPaint.color = if (k.type == KeyType.SPACE || lifted) theme.hintText else fg
             labelPaint.textSize = when {
                 // Số ở bàn phím số to hơn chữ trên phím thường, như Gboard.
+                // Cột phép tính ở màn hình ngang: ký hiệu nhỏ hơn phím khác (Gboard đo trên điện thoại 2026-11-17: + cao
+                // chừng 0,6 lần %).
+                landscape && k.rail -> textRow * 0.48f * RAIL_LANDSCAPE_TEXT
                 numberPage && k.type == KeyType.CHAR && !k.isSpecial -> textRow * 0.62f
                 page == Page.PHONEPAD && k.type == KeyType.CHAR -> textRow * 0.48f
                 k.type == KeyType.SPACE -> if (text.length == 1) textRow * 0.48f else textRow * 0.3f
                 k.type == KeyType.TO_SYMBOLS2 || k.type == KeyType.SHIFT || (k.type == KeyType.TO_SYMBOLS && !k.isPill) -> textRow * 0.42f
                 k.type == KeyType.MODE || k.type == KeyType.TO_LETTERS || text.length > 2 -> textRow * 0.32f
                 // Hàng số ở màn hình ngang thấp hơn nên chữ nhỏ hơn hàng chữ một chút.
-                shortNumberRow && row === rows[0] -> textRow * 0.48f * InputRoot.LANDSCAPE_NUMBER_TEXT
+                landscape && shortNumberRow && row === rows[0] -> textRow * 0.48f * InputRoot.LANDSCAPE_NUMBER_TEXT
                 else -> textRow * 0.48f
             }
             var y = k.rect.centerY() - (labelPaint.ascent() + labelPaint.descent()) / 2
@@ -833,8 +845,13 @@ class KeyboardView(context: Context, private val listener: Listener, private val
         /** Vuốt phím cách: dp vuốt cho mỗi bước con trỏ (trước là 14), và dp phải dời trước khi bắt đầu vuốt (trước là 12). */
         const val SPACE_DRAG_STEP = 10f
         const val SPACE_DRAG_START = 8f
-        /** Chiều cao hàng (dp) mà cỡ chữ trên phím lấy làm chuẩn (mức "Vừa"). */
+        /**
+         * Cỡ chữ trên phím ở mức "Vừa" tính như hàng cao chừng này (dp). Hạ hàng "Vừa" 50 → 46 dp cho bằng Gboard
+         * (2026-11-18) mà chữ giữ cỡ cũ; hàng thấp hơn mức "Vừa" thì chữ nhỏ theo.
+         */
         const val TEXT_ROW_DP = 50f
+        /** Khe giữa ba hàng số của bàn phím số, màn hình dọc (dp). */
+        const val NUMPAD_GAP_DP = 6f
         /** Giữ phím xoá: khoảng chờ giữa hai lần xoá lúc đầu và nhanh nhất (ms), mỗi lần nhân thêm hệ số. */
         private const val REPEAT_SLOW = 70f
         private const val REPEAT_FAST = 20f
@@ -844,6 +861,8 @@ class KeyboardView(context: Context, private val listener: Listener, private val
         /** Thanh cuộn của cột phép tính: thời gian còn hiện sau lần cuộn cuối (ms). */
         private const val RAIL_BAR_SCROLL_MS = 300L
         private const val RAIL_BAR_ALPHA = 128
+        /** Cỡ ký hiệu cột phép tính ở màn hình ngang so với chữ thường trên phím. */
+        private const val RAIL_LANDSCAPE_TEXT = 0.65f
         /** Bước hàng bàn phím số màn hình ngang so với hàng chữ (Gboard: 140 px / 38.9 dp ở 3.5x). */
         private const val PHONEPAD_ROW = 1.027f
     }

@@ -220,9 +220,13 @@ pub struct ImportReport {
 #[derive(Clone, Debug, Default)]
 pub struct Dictionary {
     entries: Vec<Entry>,
-    /// Độ phổ biến của từng mục (cùng vị trí với `entries`), và tổng của chúng.
+    /// Độ phổ biến gốc của từng mục (cùng vị trí với `entries`); học không đổi số này. Từ điển mặc định: số của bản
+    /// đóng gói ([`Self::rebase`]).
     freqs: Vec<u32>,
-    total: u64,
+    /// Phần cộng thêm do học thói quen ([`Self::bump`]) của từng mục, và tổng của chúng. Tệp từ điển lưu số gốc cộng
+    /// phần này ([`Self::to_text`]; học là tăng độ phổ biến lưu luôn vào từ điển, người dùng muốn 2026-11-17).
+    learned: Vec<u32>,
+    learned_total: u64,
     index: HashMap<String, Vec<usize>>,
     /// Cụm từ ≥ 2 âm tiết theo chữ cái đầu (`vn` → 越南), cho gõ tắt tự động.
     initials: HashMap<String, Vec<usize>>,
@@ -280,13 +284,13 @@ impl Dictionary {
     fn push(&mut self, entry: Entry, freq: u32) {
         self.entries.push(entry);
         self.freqs.push(freq);
-        self.total += freq as u64;
+        self.learned.push(0);
         self.index_entry(self.entries.len() - 1);
     }
 
-    /// Độ phổ biến của mục thứ `i` (vị trí trả về từ các hàm tra cứu).
+    /// Độ phổ biến của mục thứ `i` (vị trí trả về từ các hàm tra cứu): số gốc cộng phần đã học.
     pub fn freq(&self, i: usize) -> u32 {
-        self.freqs[i]
+        self.freqs[i].saturating_add(self.learned[i])
     }
 
     fn position(&self, text: &str, reading: &str) -> Option<usize> {
@@ -296,6 +300,11 @@ impl Dictionary {
     }
 
     pub fn freq_of(&self, text: &str, reading: &str) -> Option<u32> {
+        self.position(text, reading).map(|i| self.freq(i))
+    }
+
+    /// Độ phổ biến gốc (như trong tệp từ điển, chưa cộng phần đã học) của cặp này.
+    pub fn base_freq_of(&self, text: &str, reading: &str) -> Option<u32> {
         self.position(text, reading).map(|i| self.freqs[i])
     }
 
@@ -304,27 +313,77 @@ impl Dictionary {
         (self.entries.len() / 1000).max(1) as u32
     }
 
-    /// Người dùng chọn cặp này: cộng [`Self::step`]; tổng vượt gấp đôi số mục thì mọi số chia đôi.
+    /// Người dùng chọn cặp này: phần đã học cộng [`Self::step`]; tổng phần đã học vượt gấp đôi số mục thì phần đã
+    /// học của mọi mục chia đôi (thói quen cũ phai dần). Số gốc không bao giờ đổi: trước đây chia cả số gốc, dùng lâu
+    /// thì gần như mọi chữ về 0, mất thứ tự của từ điển (người dùng báo 2026-11-17: tr… không ra 中).
     /// Trả `false` nếu không có cặp này.
     pub fn bump(&mut self, text: &str, reading: &str) -> bool {
         let Some(i) = self.position(text, reading) else { return false };
         let step = self.step();
-        self.freqs[i] = self.freqs[i].saturating_add(step);
-        self.total += step as u64;
-        if self.total > 2 * self.entries.len() as u64 {
-            self.freqs.iter_mut().for_each(|f| *f /= 2);
-            self.total = self.freqs.iter().map(|&f| f as u64).sum();
+        self.learned[i] = self.learned[i].saturating_add(step);
+        self.learned_total += step as u64;
+        if self.learned_total > 2 * self.entries.len() as u64 {
+            self.learned.iter_mut().for_each(|f| *f /= 2);
+            self.learned_total = self.learned.iter().map(|&f| f as u64).sum();
         }
         true
     }
 
-    /// Xoá dữ liệu học: cặp có trong `defaults` về số của nó, cặp người dùng tự thêm về 0.
+    /// Xoá dữ liệu học: cặp có trong `defaults` về số của nó, cặp người dùng tự thêm về 0; phần đã học về 0.
     pub fn reset_freqs(&mut self, defaults: &Dictionary) {
         for i in 0..self.entries.len() {
             let e = &self.entries[i];
-            self.freqs[i] = defaults.freq_of(&e.text, &e.reading).unwrap_or(0);
+            self.freqs[i] = defaults.base_freq_of(&e.text, &e.reading).unwrap_or(0);
         }
-        self.total = self.freqs.iter().map(|&f| f as u64).sum();
+        self.clear_learned();
+    }
+
+    /// Tách độ phổ biến đọc từ tệp (số gốc cộng phần đã học, [`Self::to_text`]) theo từ điển mặc định `defaults` (bản
+    /// đóng gói, dict/nomna-dict.txt): số gốc là số của `defaults`, phần vượt là phần đã học. Số trong tệp thấp hơn số
+    /// của `defaults` (bản trước chia đôi cả số gốc) thì về số của `defaults`. Cặp không có trong `defaults` giữ cả số
+    /// làm số gốc.
+    pub fn rebase(&mut self, defaults: &Dictionary) {
+        for i in 0..self.entries.len() {
+            let e = &self.entries[i];
+            let Some(base) = defaults.base_freq_of(&e.text, &e.reading) else { continue };
+            self.learned[i] = self.learned[i].saturating_add(self.freqs[i].saturating_sub(base));
+            self.freqs[i] = base;
+        }
+        self.learned_total = self.learned.iter().map(|&f| f as u64).sum();
+    }
+
+    /// Như [`Self::rebase`] với từ điển mặc định là nội dung tệp `defaults`, nhưng không dựng từ điển thứ hai (chỉ mục,
+    /// gõ tắt…): đọc từng dòng rồi tra trong từ điển này. Dựng cả từ điển mặc định chỉ để lấy số gốc mất ~360 ms trên
+    /// điện thoại mỗi lần bàn phím khởi động, chặn luồng giao diện (đo 2026-11-18). Dòng trùng trong `defaults`: dòng
+    /// đầu được tính, như khi nạp.
+    pub fn rebase_text(&mut self, defaults: &str) {
+        let (entries, _) = parse(defaults);
+        let mut done = vec![false; self.entries.len()];
+        for (e, base) in entries {
+            let Some(i) = self.position(&e.text, &e.reading) else { continue };
+            if std::mem::replace(&mut done[i], true) {
+                continue;
+            }
+            self.learned[i] = self.learned[i].saturating_add(self.freqs[i].saturating_sub(base));
+            self.freqs[i] = base;
+        }
+        self.learned_total = self.learned.iter().map(|&f| f as u64).sum();
+    }
+
+    /// Bỏ hết phần đã học.
+    pub fn clear_learned(&mut self) {
+        self.learned.iter_mut().for_each(|f| *f = 0);
+        self.learned_total = 0;
+    }
+
+    /// Phần đã học, mỗi cặp có học một dòng `chữ;âm;số`, xếp a → z (để kiểm tra).
+    pub fn learned_text(&self) -> String {
+        self.sorted()
+            .into_iter()
+            .filter(|&i| self.learned[i] > 0)
+            .map(|i| format!("{};{};{}
+", self.entries[i].text, self.entries[i].reading, self.learned[i]))
+            .collect()
     }
 
     fn index_entry(&mut self, i: usize) {
@@ -364,7 +423,8 @@ impl Dictionary {
             return false;
         };
         self.entries.remove(pos);
-        self.total -= self.freqs.remove(pos) as u64;
+        self.freqs.remove(pos);
+        self.learned_total -= self.learned.remove(pos) as u64;
         self.rebuild_index();
         true
     }
@@ -372,7 +432,8 @@ impl Dictionary {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.freqs.clear();
-        self.total = 0;
+        self.learned.clear();
+        self.learned_total = 0;
         self.rebuild_index();
     }
 
@@ -405,7 +466,9 @@ impl Dictionary {
             return false;
         }
         self.entries[i] = entry;
-        self.total = self.total - self.freqs[i] as u64 + freq as u64;
+        // Người dùng đặt cả con số: không cộng thêm phần đã học.
+        self.learned_total -= self.learned[i] as u64;
+        self.learned[i] = 0;
         self.freqs[i] = freq;
         self.rebuild_index();
         true
@@ -516,7 +579,7 @@ impl Dictionary {
     pub fn to_text(&self) -> String {
         self.sorted()
             .into_iter()
-            .map(|i| format!("{};{};{}\n", self.entries[i].text, self.entries[i].reading, self.freqs[i]))
+            .map(|i| format!("{};{};{}\n", self.entries[i].text, self.entries[i].reading, self.freq(i)))
             .collect()
     }
 
@@ -672,26 +735,50 @@ mod tests {
     }
 
     #[test]
-    fn bump_halves_when_total_doubles_and_resets() {
-        // 4 mục: mỗi lần chọn cộng 1; tổng vượt 8 thì mọi số chia đôi.
+    fn learning_saves_into_dictionary_and_halves_only_learned() {
+        // 4 mục: mỗi lần chọn cộng 1 vào phần đã học; tổng phần đã học vượt 8 thì phần đã học chia đôi, số gốc giữ nguyên.
         let defaults = "南;nam;3\n男;nam;1\n𢆥;năm;0\n喃;nôm;2\n";
         let (mut dict, _) = Dictionary::from_text(defaults);
         assert_eq!(dict.step(), 1);
         assert!(dict.bump("男", "nam"));
         assert!(!dict.bump("男", "nôm"));
+        // Học là tăng độ phổ biến, lưu luôn vào từ điển (người dùng muốn 2026-11-17).
         assert_eq!(dict.to_text(), "南;nam;3\n男;nam;2\n𢆥;năm;0\n喃;nôm;2\n");
-        dict.bump("男", "nam");
-        dict.bump("男", "nam");
-        // Tổng 9 > 8: chia đôi, thứ tự giữ nguyên.
-        assert_eq!(dict.to_text(), "南;nam;1\n男;nam;2\n𢆥;năm;0\n喃;nôm;1\n");
+        for _ in 0..8 {
+            dict.bump("男", "nam");
+        }
+        // Phần đã học 9 > 8: chia đôi còn 4; số gốc không đổi (trước đây chia cả số gốc, dùng lâu thì mọi chữ về 0).
+        assert_eq!(dict.learned_text(), "男;nam;4\n");
+        assert_eq!(dict.to_text(), "南;nam;3\n男;nam;5\n𢆥;năm;0\n喃;nôm;2\n");
+        // Đọc lại tệp đã lưu rồi tách theo bản mặc định: số gốc và phần đã học như trước khi lưu.
+        let (mut again, _) = Dictionary::from_text(&dict.to_text());
+        again.rebase(&Dictionary::from_text(defaults).0);
+        assert_eq!(again.learned_text(), "男;nam;4\n");
+        assert_eq!(again.freq_of("男", "nam"), Some(5));
         // Xoá dữ liệu học: về số mặc định, cặp tự thêm về 0.
         dict.insert(Entry::new("楠", "nam").unwrap());
         dict.bump("楠", "nam");
         dict.reset_freqs(&Dictionary::from_text(defaults).0);
         assert_eq!(dict.to_text(), "南;nam;3\n男;nam;1\n楠;nam;0\n𢆥;năm;0\n喃;nôm;2\n");
+        assert_eq!(dict.learned_text(), "");
         // 2500 mục: mỗi lần chọn cộng 2 (một phần nghìn số mục).
         let many: String = (0..2500u32).map(|i| format!("{};nam;0\n", char::from_u32(0x4E00 + i).unwrap())).collect();
         assert_eq!(Dictionary::from_text(&many).0.step(), 2);
+    }
+
+    #[test]
+    fn rebase_follows_defaults_and_keeps_surplus_as_learned() {
+        // Bản trước chia đôi cả số gốc: 南 9 → 1 (đã mòn), 男 1 → 40 (chọn nhiều).
+        let (mut dict, _) = Dictionary::from_text("南;nam;1\n男;nam;40\n楠;nam;7\n");
+        dict.rebase(&Dictionary::from_text("南;nam;9\n男;nam;1\n").0);
+        // Số gốc theo bản mặc định (南 về 9); phần vượt là phần đã học; cặp tự thêm giữ nguyên.
+        assert_eq!(dict.to_text(), "南;nam;9\n男;nam;40\n楠;nam;7\n");
+        assert_eq!(dict.learned_text(), "男;nam;39\n");
+        // Đọc thẳng tệp mặc định (không dựng từ điển thứ hai): cùng kết quả; dòng trùng thì dòng đầu được tính.
+        let (mut quick, _) = Dictionary::from_text("南;nam;1\n男;nam;40\n楠;nam;7\n");
+        quick.rebase_text("南;nam;9\n男;nam;1\n南;nam;0\n");
+        assert_eq!(quick.to_text(), dict.to_text());
+        assert_eq!(quick.learned_text(), dict.learned_text());
     }
 
     #[test]

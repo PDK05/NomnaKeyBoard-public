@@ -201,7 +201,8 @@ class WordDict private constructor(private val context: Context, private val nam
 
         /** Chữ thường không dấu: `Chữ` → `chu`, đ → d. */
         fun fold(s: String): String =
-            marks.replace(Normalizer.normalize(s.lowercase(), Normalizer.Form.NFD), "").replace('đ', 'd')
+            // Chữ ASCII (cả từ điển tiếng Anh) không có dấu: chỉ cần chữ thường, khỏi tách dấu và chạy regex.
+            if (s.all { it.code < 0x80 }) s.lowercase() else marks.replace(Normalizer.normalize(s.lowercase(), Normalizer.Form.NFD), "").replace('đ', 'd')
 
         /** Khoá bất kể kiểu bỏ dấu thanh (hoà = hòa, thuỷ = thủy): chữ thường, dấu thanh dời ra cuối mỗi chữ. */
         fun toneKey(s: String): String = s.lowercase().split(' ').joinToString(" ") { syl ->

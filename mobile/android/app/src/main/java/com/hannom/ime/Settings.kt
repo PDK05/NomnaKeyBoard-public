@@ -202,8 +202,11 @@ class Settings(context: Context) {
          * không lên quá [InputRoot.MAX_SHARE] màn hình.
          */
         const val MAX_BOTTOM_GAP = 480
-        /** Chiều cao hàng phím (dp) của các mức thấp, vừa, cao. */
-        val ROW_HEIGHTS = intArrayOf(44, 50, 56)
+        /**
+         * Chiều cao hàng phím (dp) của các mức thấp, vừa, cao. "Vừa" bằng Gboard cỡ mặc định (đo trên điện thoại
+         * 2026-11-18: bước hàng chữ 46 dp; trước là 50).
+         */
+        val ROW_HEIGHTS = intArrayOf(40, 46, 52)
         const val MIN_ROW_HEIGHT = 36
         const val MIN_LANDSCAPE_ROW_HEIGHT = 24
         const val MAX_ROW_HEIGHT = 72

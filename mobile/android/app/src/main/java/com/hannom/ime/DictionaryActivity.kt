@@ -33,6 +33,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.PopupMenu
+import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -63,8 +64,9 @@ abstract class DictPage<T> : Activity() {
     protected var descending = false
     /** Khoá ([keyOf]) các mục đang chọn (giữ để chọn). */
     protected val selected = LinkedHashSet<String>()
-    private var insetTop = 0
-    private var insetBottom = 0
+    /** Phần bị che ở bốn cạnh (trái, trên, phải, dưới; px): thanh hệ thống, bàn phím, tai thỏ. */
+    private var insetSides = IntArray(4)
+    private lateinit var listFrame: FrameLayout
 
     protected abstract fun pageTitle(): CharSequence
     protected abstract val searchHint: String
@@ -85,12 +87,23 @@ abstract class DictPage<T> : Activity() {
     protected open val onAdd: (() -> Unit)? = null
     protected open val addDescription = "Thêm"
     protected open fun selectable(item: T) = true
+    /** ⋮ có mục Xoá không. */
+    protected open val deletable = true
     /** Mục luôn nằm trên đầu danh sách (từ điển mặc định). */
     protected open fun pinned(item: T) = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        padForCutout()
+        // Cửa sổ vẽ cả vào vùng tai thỏ (nền thanh tiêu đề tràn qua); chữ, nút lùi vào theo insets bên dưới.
+        if (Build.VERSION.SDK_INT >= 28) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= 30) {
+                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                } else {
+                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+            }
+        }
         colors = SettingsColors.of(this)
 
         titleBlock = LinearLayout(this).apply {
@@ -105,7 +118,9 @@ abstract class DictPage<T> : Activity() {
             subtitle = TextView(context).apply {
                 setTextColor(colors.summary)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                isSingleLine = true
+                // Không đủ chỗ (chữ hệ thống to, màn hẹp) thì xuống dòng, không cắt cụt: một dòng thì "A → Z" bị cắt ở
+                // mép các nút tìm / thêm (người dùng báo 2026-11-18).
+                maxLines = 2
             }
             addView(subtitle)
         }
@@ -169,7 +184,7 @@ abstract class DictPage<T> : Activity() {
             gravity = Gravity.CENTER
         }
         list.emptyView = empty
-        val listFrame = FrameLayout(this).apply {
+        listFrame = FrameLayout(this).apply {
             addView(list, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             addView(empty, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             scrollBubble()?.let { bubble ->
@@ -186,20 +201,28 @@ abstract class DictPage<T> : Activity() {
             setBackgroundColor(colors.background)
             addView(column, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
-        // Vẽ tràn viền: thanh tiêu đề chừa thanh trạng thái, danh sách chừa thanh điều hướng và bàn phím.
+        // Vẽ tràn viền: thanh tiêu đề chừa thanh trạng thái, danh sách chừa thanh điều hướng và bàn phím. Màn hình ngang:
+        // chừa cả tai thỏ và thanh điều hướng ở hai bên (nền thanh tiêu đề vẫn tràn qua, chữ / nút lùi vào); trước đây
+        // nút ⋮ nằm dưới thanh điều hướng, dải tai thỏ lệch màu thanh tiêu đề (người dùng báo 2026-11-18).
         root.setOnApplyWindowInsetsListener { _, insets ->
-            val (top, bottom) = if (Build.VERSION.SDK_INT >= 30) {
-                val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime())
-                i.top to i.bottom
+            val sides = if (Build.VERSION.SDK_INT >= 30) {
+                val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime() or WindowInsets.Type.displayCutout())
+                intArrayOf(i.left, i.top, i.right, i.bottom)
             } else {
                 @Suppress("DEPRECATION")
-                insets.systemWindowInsetTop to insets.systemWindowInsetBottom
+                val cut = if (Build.VERSION.SDK_INT >= 28) insets.displayCutout else null
+                @Suppress("DEPRECATION")
+                intArrayOf(
+                    maxOf(insets.systemWindowInsetLeft, cut?.safeInsetLeft ?: 0), insets.systemWindowInsetTop,
+                    maxOf(insets.systemWindowInsetRight, cut?.safeInsetRight ?: 0), insets.systemWindowInsetBottom,
+                )
             }
-            if (top != insetTop || bottom != insetBottom) {
-                insetTop = top
-                insetBottom = bottom
-                bar.setPadding(0, insetTop, dpi(4), 0)
-                list.setPadding(0, 0, 0, insetBottom)
+            if (!sides.contentEquals(insetSides)) {
+                insetSides = sides
+                val (left, top, right, bottom) = sides
+                bar.setPadding(left, top, right + dpi(4), 0)
+                listFrame.setPadding(left, 0, right, 0)
+                list.setPadding(0, 0, 0, bottom)
             }
             insets
         }
@@ -289,8 +312,8 @@ abstract class DictPage<T> : Activity() {
                 reload()
                 list.setSelection(0)
             },
-            deleteLabel(chosen.size) to { delete(chosen, chosen.isEmpty()) },
         ) + listOfNotNull(
+            if (deletable) deleteLabel(chosen.size) to { delete(chosen, chosen.isEmpty()) } else null,
             if (selected.isNotEmpty()) "Bỏ chọn tất cả" to { clearSelection() } else null,
         )
         actions.forEachIndexed { i, (label, _) -> menu.menu.add(0, i, i, hanNomText(label)) }
@@ -348,6 +371,46 @@ abstract class DictPage<T> : Activity() {
         view.clearFocus()
     }
 
+    /**
+     * Hiện hộp thoại có ô nhập: giữa phần màn hình phía trên bàn phím, bàn phím hiện thì tự đẩy lên cho khỏi bị đè (phần
+     * ô nhập trong khung cuộn [scrollable] nên co được khi chật). Bàn phím đang mở sẵn (ô tìm) thì hộp thoại vẽ một khung
+     * hình ở chỗ chưa tính bàn phím rồi mới nhảy lên: bảng sửa nháy (người dùng báo 2026-11-18). Khi đó hộp thoại trong
+     * suốt tới lúc đã đặt đúng chỗ phía trên bàn phím mới hiện ra.
+     */
+    protected fun showAboveKeyboard(dialog: AlertDialog) {
+        val w = dialog.window ?: return dialog.show()
+        w.setSoftInputMode(
+            android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE or
+                android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE,
+        )
+        val imeOpen = Build.VERSION.SDK_INT >= 30 &&
+            window.decorView.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true
+        if (!imeOpen) return dialog.show()
+        val decor = w.decorView
+        decor.alpha = 0f
+        var shown = false
+        val reveal = Runnable {
+            if (!shown) {
+                shown = true
+                decor.alpha = 1f
+            }
+        }
+        decor.setOnApplyWindowInsetsListener { v, insets ->
+            // Đã nhận chỗ của bàn phím: hiện ở khung hình sau, khi đã dàn lại theo chỗ đó.
+            if (Build.VERSION.SDK_INT >= 30 && insets.isVisible(WindowInsets.Type.ime())) v.postOnAnimation { v.postOnAnimation(reveal) }
+            v.onApplyWindowInsets(insets)
+        }
+        // Phòng khi không nhận được chỗ bàn phím (bàn phím tắt giữa chừng): vẫn hiện.
+        decor.postDelayed(reveal, 400)
+        dialog.show()
+    }
+
+    /** [content] trong khung cuộn, để hộp thoại co lại vừa phần trên bàn phím ([pinAboveKeyboard]). */
+    protected fun scrollable(content: View) = ScrollView(this).apply {
+        isFillViewport = true
+        addView(content)
+    }
+
     /** Hộp thoại nhập tên (từ điển mới, đổi tên). */
     protected fun askName(title: String, initial: String, onDone: (String) -> Unit) {
         val field = EditText(this).apply {
@@ -372,9 +435,8 @@ abstract class DictPage<T> : Activity() {
             .setPositiveButton("Lưu") { _, _ -> field.text.toString().trim().takeIf { it.isNotEmpty() }?.let(onDone) }
             .setNegativeButton("Huỷ", null)
             .create()
-        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
         dialog.window?.setDimAmount(0.2f)
-        dialog.show()
+        showAboveKeyboard(dialog)
         field.requestFocus()
     }
 
@@ -512,8 +574,14 @@ class DictionaryActivity : DictPage<Lang>() {
 
     override fun summary(count: Int) = "$count ngôn ngữ"
 
-    override fun deleteLabel(count: Int) =
-        if (count > 0) "Xoá từ điển cá nhân của $count ngôn ngữ đã chọn" else "Xoá tất cả từ điển cá nhân"
+    /**
+     * Trang danh sách ngôn ngữ không có giữ để chọn, ⋮ cũng không có mục xoá từ điển cá nhân (người dùng muốn
+     * 2026-11-18); xoá ở trang từ điển của từng ngôn ngữ.
+     */
+    override fun selectable(item: Lang) = false
+    override val deletable = false
+
+    override fun deleteLabel(count: Int) = "Xoá tất cả từ điển cá nhân"
 
     override fun delete(items: List<Lang>, all: Boolean) {
         val langs = if (all) Lang.entries else items
@@ -559,8 +627,37 @@ class DictionaryActivity : DictPage<Lang>() {
 /** Các từ điển của một ngôn ngữ: công tắc bật / tắt (bật nhiều thì bàn phím tự gộp), + thêm từ điển cá nhân. */
 class DictListActivity : DictPage<DictInfo>() {
     private val lang by lazy { Lang.of(intent.getStringExtra(EXTRA_LANG)) ?: Lang.NOM }
-    /** Số mục của từng từ điển, đếm lại mỗi lần trở về trang. */
-    private val counts = HashMap<String, Int>()
+    /**
+     * Số mục của từ điển [item]: nhớ theo tệp (kích thước, lần sửa), tệp không đổi thì không đếm lại. Trước đây mỗi lần
+     * bật / tắt đều đếm lại mọi từ điển, đọc lại cả tệp tiếng Anh hơn trăm nghìn từ trên luồng giao diện: gạt công tắc
+     * "siêu lag" (người dùng báo 2026-11-18).
+     */
+    private fun countOf(item: DictInfo): Int? {
+        val f = Dictionaries.file(this, lang, item.id)
+        val key = "${lang.code}/${item.id}/" + if (f.exists()) "${f.length()}:${f.lastModified()}" else "builtin"
+        synchronized(COUNTS) {
+            COUNTS[key]?.let { return it }
+            if (!counting.add(key)) return null
+        }
+        // Chưa đếm: đếm ở luồng nền (tiếng Anh ~1,4 giây trên máy ảo, đo 2026-11-18), đếm xong thì vẽ lại trang.
+        val app = applicationContext
+        Thread {
+            val n = runCatching { Dictionaries.store(app, item).count() }.getOrNull()
+            synchronized(COUNTS) {
+                counting.remove(key)
+                if (n != null) COUNTS[key] = n
+            }
+            if (n != null) runOnUiThread { if (!isDestroyed) reload() }
+        }.start()
+        return null
+    }
+
+    private companion object {
+        /** Số mục đã đếm ([countOf]), giữ qua các lần mở trang. */
+        val COUNTS = HashMap<String, Int>()
+        /** Các tệp đang đếm ở luồng nền. */
+        val counting = HashSet<String>()
+    }
 
     override fun pageTitle() = lang.title
     override val searchHint = "Tìm từ điển"
@@ -576,7 +673,6 @@ class DictListActivity : DictPage<DictInfo>() {
 
     override fun load(query: String): List<DictInfo> {
         val q = WordDict.fold(query.trim())
-        counts.clear()
         return Dictionaries.list(this, lang)
             .filter { q.isEmpty() || WordDict.fold(it.name).contains(q) }
             .sortedWith(compareBy<DictInfo> { WordDict.fold(it.name) }.thenBy { it.name })
@@ -587,8 +683,7 @@ class DictListActivity : DictPage<DictInfo>() {
     override fun bind(holder: RowHolder, item: DictInfo) {
         holder.text.text = hanNomText(item.name)
         holder.reading.text = ""
-        val count = counts.getOrPut(item.id) { Dictionaries.store(this, item).count() }
-        holder.codes.text = "${number(count)} mục"
+        holder.codes.text = countOf(item)?.let { "${number(it)} mục" } ?: "Đang đếm số mục…"
         holder.side.text = ""
         holder.toggle.visibility = View.VISIBLE
         holder.toggle.isChecked = item.enabled
@@ -699,7 +794,7 @@ class DictWordsActivity : DictPage<DictRow>() {
     private fun formatHelp() {
         val message = if (store.hasReading) {
             "Tệp nhập / xuất là văn bản UTF-8, mỗi dòng: chữ;âm đọc;độ phổ biến\n\n" +
-                "固;cố;3\n越南;vn;0  (mã gõ tắt)\n\nMỗi âm một dòng. Độ phổ biến tăng mỗi khi chọn chữ khi gõ."
+                "固;cố;3\n\nMỗi âm một dòng. Độ phổ biến tăng mỗi khi chọn chữ khi gõ."
         } else {
             "Tệp nhập / xuất là văn bản UTF-8, mỗi dòng: từ;độ phổ biến\n\nchữ nôm;120\nhello;35"
         }
@@ -781,7 +876,7 @@ class DictWordsActivity : DictPage<DictRow>() {
 
         val builder = AlertDialog.Builder(this)
             .setTitle(hanNomText(if (row == null) "Thêm vào ${info.name}" else "Sửa mục"))
-            .setView(form)
+            .setView(scrollable(form))
             .setPositiveButton("Lưu", null)
             .setNegativeButton("Huỷ", null)
         if (row != null) {
@@ -799,6 +894,18 @@ class DictWordsActivity : DictPage<DictRow>() {
                     error.text = "Độ phổ biến phải là số nguyên không âm"
                     return@setOnClickListener
                 }
+                // Ô bỏ trống: nói theo ô của hộp thoại, không theo định dạng tệp của lõi ("thiếu âm đọc sau dấu ;" — người
+                // dùng thấy không đúng trải nghiệm, 2026-11-18).
+                val blank = when {
+                    textField.text.isBlank() -> if (nom) "Chưa nhập chữ" else "Chưa nhập từ"
+                    nom && readingField.text.isBlank() -> "Chưa nhập âm đọc"
+                    else -> null
+                }
+                if (blank != null) {
+                    error.text = blank
+                    (if (textField.text.isBlank()) textField else readingField).requestFocus()
+                    return@setOnClickListener
+                }
                 val message = store.put(row, textField.text.toString(), readingField.text.toString(), freq)
                 if (message == null) {
                     dialog.dismiss()
@@ -808,10 +915,9 @@ class DictWordsActivity : DictPage<DictRow>() {
                 }
             }
         }
-        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
         // Lớp phủ mặc định làm tối hẳn màn hình phía sau: chỉ phủ nhẹ.
         dialog.window?.setDimAmount(0.2f)
-        dialog.show()
+        showAboveKeyboard(dialog)
         val focus = if (row == null || !nom) textField else readingField
         focus.requestFocus()
         focus.setSelection(focus.text.length)

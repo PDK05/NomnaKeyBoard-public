@@ -278,25 +278,6 @@ class ClipboardPanel(context: Context, private val listener: Listener) : LinearL
         }, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
     }
 
-    /**
-     * Màn hình ngang: cửa sổ Gboard phủ cả tai thỏ và lùi nội dung vào bằng tai thỏ ở cả hai bên. Cửa sổ của ta né tai
-     * thỏ thì bên đó đã lùi sẵn, chỉ thêm ở bên kia. Trả về (thêm trái, thêm phải) theo px.
-     */
-    private fun cutoutSides(): Pair<Int, Int> {
-        if (!landscape || android.os.Build.VERSION.SDK_INT < 29 || !isAttachedToWindow) return 0 to 0
-        val wm = context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
-        @Suppress("DEPRECATION") val display = wm.defaultDisplay
-        val cut = display.cutout ?: return 0 to 0
-        val size = maxOf(cut.safeInsetLeft, cut.safeInsetRight)
-        if (size == 0) return 0 to 0
-        val loc = IntArray(2)
-        getLocationOnScreen(loc)
-        val real = android.graphics.Point()
-        @Suppress("DEPRECATION") display.getRealSize(real)
-        return if (cut.safeInsetLeft > 0) maxOf(0, size - loc[0]) to size
-        else size to maxOf(0, size - (real.x - loc[0] - width))
-    }
-
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         super.onLayout(changed, l, t, r, b)
         val sides = cutoutSides()

@@ -147,15 +147,16 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
 
     /**
      * Bề rộng nút tìm, khoảng sau nó và mỗi nút nhóm. Màn hình dọc cố định (đo trên Gboard AVD 411 dp). Màn hình ngang
-     * (đo trên điện thoại): nút tìm chiếm [LANDSCAPE_SEARCH_SHARE] dải, các nút nhóm chia đều phần còn lại sao cho vừa
-     * [LANDSCAPE_TABS] nút (Gboard: nút tìm 179 dp, cách 9 dp, mỗi nhóm 61 dp trên dải 619 dp).
+     * (đo trên điện thoại): nút tìm [LANDSCAPE_SEARCH] dp, mỗi nhóm [LANDSCAPE_TAB] dp.
      */
     private fun sizeStrip() {
         val stripW = stripScroll.width
         if (landscape && stripW > 0) {
-            searchW = (stripW * LANDSCAPE_SEARCH_SHARE).toInt()
-            searchGap = context.dpi(LANDSCAPE_SEARCH_GAP)
-            tabW = (stripW - searchW - searchGap) / LANDSCAPE_TABS
+            // Đo lại trên điện thoại 2026-11-17: cỡ cố định theo dp, nhóm thứ tám lộ một mẩu ở mép phải như Gboard.
+            // Khoảng sau nút tìm có thể âm: ô nhóm đầu lấn dưới nút tìm (nút tìm nằm đè lên, chạm vẫn là tìm).
+            searchW = context.dpi(LANDSCAPE_SEARCH)
+            tabW = context.dp(LANDSCAPE_TAB).toInt()
+            searchGap = context.dp(LANDSCAPE_FIRST_TAB).toInt() - tabW / 2
         } else {
             searchW = context.dpi(SEARCH_WIDTH)
             searchGap = context.dpi(SEARCH_GAP)
@@ -236,15 +237,19 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
      */
     private fun revealTab(i: Int) {
         val start = searchW + searchGap
+        // Chỗ cuộn mà nút tìm đã khuất hẳn. Màn hình ngang ô nhóm đầu lấn dưới nút tìm ([sizeStrip]): cuộn tới đầu ô
+        // đó thì còn lòi một mẩu nút tìm cạnh nút gần đây (người dùng báo 2026-11-17), nên không cuộn ít hơn mép phải
+        // nút tìm.
+        val hidden = maxOf(start, searchW)
         val l = start + i * tabW
         val r = l + tabW
         val x = stripScroll.scrollX
         val target = when {
-            r > x + stripScroll.width -> maxOf(start, r - stripScroll.width)
-            l < x -> l
+            r > x + stripScroll.width -> maxOf(hidden, r - stripScroll.width)
+            l < x -> maxOf(l, hidden)
             else -> return
         }
-        stripScroll.smoothScrollTo(target, 0)
+        if (target != x) stripScroll.smoothScrollTo(target, 0)
     }
 
     /**
@@ -273,15 +278,20 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
         val w = full - left
         // Chữ mờ hẳn khi nút mới thu được nửa đường.
         searchLabel.alpha = ((w - h).toFloat() / (full - h) * 2 - 1).coerceIn(0f, 1f)
+        // Viên kính lúp mờ dần khi trôi qua mép trái: dải dừng lúc nó gần khuất thì không còn lòi một mẩu cạnh nút
+        // gần đây (người dùng báo 2026-11-17).
+        searchButton.alpha = ((full - x).toFloat() / h).coerceIn(0f, 1f)
         if (lp.leftMargin == left && lp.width == w) return
         lp.leftMargin = left
         lp.width = w
         searchButton.requestLayout()
     }
+    /** Màn hình ngang: khoảng trống giữa `:-)` và nút xoá ở hàng dưới (ta không có GIF / nhãn dán như Gboard). */
+    private val bottomSpacer = View(context).apply { visibility = View.GONE }
     private val bottomRow = LinearLayout(context).apply {
         orientation = HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        for (v in listOf(abc, emojiTab, emoticonTab, delete)) addView(v, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
+        for (v in listOf(abc, emojiTab, emoticonTab, bottomSpacer, delete)) addView(v, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
     }
     private val bottomHeight = context.dpi(48)
     private var bottomShown = true
@@ -337,7 +347,8 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
      * vẫn trải hết bề ngang.
      */
     private fun styleForOrientation() {
-        // Hàng trên cao 44 dp cả hai chiều (người dùng muốn ngang thoáng như dọc, không thấp như Gboard ngang).
+        // Hàng trên cao 44 dp cả hai chiều: người dùng muốn ngang thoáng như dọc (thử 36 dp như Gboard ngang thì nút tìm
+        // và bóng nút nhóm sát viền trên dưới quá, người dùng chê 2026-11-17).
         topRow.layoutParams.height = context.dpi(44)
         val edgeL = if (landscape) insetLeft + context.dpi(LANDSCAPE_EDGE) else 0
         val edgeR = if (landscape) insetRight + context.dpi(LANDSCAPE_EDGE) else 0
@@ -352,6 +363,19 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
             leftMargin = edgeL
             rightMargin = edgeR
         }
+        // Hàng dưới màn hình ngang như Gboard: ABC và xoá mỗi nút một ô hẹp ở hai mép, nút trang (viên) rộng cố định,
+        // emoji sát ABC, `:-)` ngay cạnh emoji (ta không có GIF / nhãn dán; người dùng muốn 2026-11-17), phần trống dồn
+        // sang trước nút xoá. Dọc thì bốn ô chia đều.
+        fun slot(v: View, dp: Float) = (v.layoutParams as LayoutParams).apply {
+            width = if (landscape) context.dp(dp).toInt() else 0
+            weight = if (landscape) 0f else 1f
+        }
+        slot(abc, LANDSCAPE_ABC)
+        slot(emojiTab, LANDSCAPE_PILL)
+        slot(emoticonTab, LANDSCAPE_PILL)
+        slot(delete, LANDSCAPE_DELETE)
+        bottomSpacer.visibility = if (landscape) View.VISIBLE else View.GONE
+        markBottom()
         bottomRow.requestLayout()
         // Nút quay lại là hình tròn 34 dp (đo trên Gboard), cách mép 8 dp; nút tìm cách nó đúng bằng khoảng đó.
         val gap = context.dpi(8)
@@ -512,11 +536,14 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
 
     /** Nút trang đang mở ở hàng dưới: viên đặc màu nhấn, icon / chữ màu trên nền nhấn (như Gboard). */
     private fun markBottom() {
+        // Màn hình ngang: viên rộng đúng cả nút, cao như Gboard ([LANDSCAPE_PILL_INSET] trên dưới).
+        val side = if (landscape) 0 else context.dpi(10)
+        val top = if (landscape) context.dp(LANDSCAPE_PILL_INSET).toInt() else context.dpi(4)
         fun mark(v: View, on: Boolean) {
             v.background = if (on) android.graphics.drawable.GradientDrawable().apply {
                 cornerRadius = context.dp(20f)
                 setColor(theme.accent)
-            }.let { android.graphics.drawable.InsetDrawable(it, context.dpi(10), context.dpi(4), context.dpi(10), context.dpi(4)) } else null
+            }.let { android.graphics.drawable.InsetDrawable(it, side, top, side, top) } else null
         }
         mark(emojiTab, !emoticons)
         mark(emoticonTab, emoticons)
@@ -712,8 +739,8 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
         /** Các hàng đã dàn: tiêu đề (`items` rỗng) hoặc một hàng ô, kèm toạ độ trên. */
         private class Row(val top: Int, val height: Int, val title: String?, val items: List<String>, val group: Int)
         private var rows: List<Row> = emptyList()
-        /** Hàng tiêu đề nhóm, 32 dp cả hai chiều (ngang giống dọc). */
-        private val headerHeight get() = context.dpi(32)
+        /** Hàng tiêu đề nhóm: 32 dp ở màn hình dọc, ngang thấp hơn như Gboard ([LANDSCAPE_HEADER]). */
+        private val headerHeight get() = context.dpi(if (landscape && !emoticons) LANDSCAPE_HEADER else 32)
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
         private val robotoTypeface = context.robotoTypeface()
         private val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -767,7 +794,8 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
             val cell = when {
                 emoticons -> context.dpi(if (landscape) EMOTICON_ROW_LANDSCAPE else EMOTICON_ROW)
                 landscape -> context.dpi(LANDSCAPE_ROW)
-                else -> (w / columns.toFloat() * 0.95f).toInt()
+                // Màn hình dọc, đo trên Gboard (điện thoại 2026-11-18, 8 cột, ô rộng 155 px): hàng cao ~178 px.
+                else -> (w / columns.toFloat() * PORTRAIT_ROW).toInt()
             }
             var y = 0
             val out = ArrayList<Row>()
@@ -846,7 +874,8 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
                 paint.typeface = null
                 paint.textSize = when {
                     landscape -> context.dp(LANDSCAPE_SIZE)
-                    else -> cellW * 0.62f
+                    // Gboard dọc: emoji vẽ rộng ~128 px trong ô 155 px (đo 2026-11-18).
+                    else -> cellW * PORTRAIT_SIZE
                 }
                 val cy = row.top + row.height / 2f - (paint.ascent() + paint.descent()) / 2
                 val recent = isRecent(row)
@@ -1047,8 +1076,23 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
         /** Tốc độ cuộn (dp/ms) từ đó hàng dưới thu lại hay hiện ra; kéo chậm thì hàng dưới đứng yên. */
         private const val FAST_SCROLL = 0.5f
         /** Màn hình ngang, đo trên Gboard: chiều cao hàng emoji (dp) và cỡ chữ emoji (dp, hình vẽ rộng chừng 36 dp). */
-        private const val LANDSCAPE_ROW = 51
-        private const val LANDSCAPE_SIZE = 32f
+        // Đo lại trên điện thoại 2026-11-17 (Gboard ngang, 560 dpi): hàng emoji 50 dp, emoji to hơn ta ~4%.
+        private const val LANDSCAPE_ROW = 50
+        /** Màn hình dọc (đo trên Gboard 2026-11-18): chiều cao hàng và cỡ chữ emoji so với bề rộng một ô (trước 0,95 và 0,62). */
+        private const val PORTRAIT_ROW = 1.15f
+        private const val PORTRAIT_SIZE = 0.755f
+        private const val LANDSCAPE_SIZE = 33f
+        // Màn hình ngang, đo trên Gboard điện thoại 2026-11-17: tiêu đề nhóm 28 dp; hàng dưới: ABC 67 dp, viên trang
+        // 139 × 37,4 dp (liền ô ABC), nút xoá 68 dp; dải nhóm: nút tìm 180 dp, mỗi nhóm 65,4 dp, icon nhóm đầu cách mép
+        // phải nút tìm 25 dp. (Hàng trên Gboard ngang chỉ 36 dp; ta giữ 44 dp, xem [styleForOrientation].)
+        private const val LANDSCAPE_HEADER = 28
+        private const val LANDSCAPE_ABC = 67f
+        private const val LANDSCAPE_PILL = 139f
+        private const val LANDSCAPE_PILL_INSET = 5.3f
+        private const val LANDSCAPE_SEARCH = 180
+        private const val LANDSCAPE_TAB = 65.4f
+        private const val LANDSCAPE_FIRST_TAB = 25f
+        private const val LANDSCAPE_DELETE = 68f
         // Hàng trên, đo trên Gboard (AVD 411 dp): nút tìm 109 × 34 dp, mỗi nhóm 35 dp.
         private const val SEARCH_WIDTH = 109
         /** Khoảng giữa nút tìm và nút nhóm đầu tiên (dp). */
@@ -1063,11 +1107,8 @@ class EmojiPanel(context: Context, private val listener: Listener) : LinearLayou
         private const val EMOTICON_SIZE = 18f
         private const val EMOTICON_EXTRA = 136
         // Màn hình ngang, đo trên Gboard điện thoại (560 dpi, lề tai thỏ 37 dp): mọi thứ lùi vào hai bên lề tai thỏ thêm
-        // 3 dp; dải nhóm: nút tìm 29% bề rộng dải, cách 9 dp, vừa đúng 7 nút nhóm; trang `:-)` hàng cao 53 dp.
+        // 3 dp; trang `:-)` hàng cao 53 dp.
         private const val LANDSCAPE_EDGE = 3
-        private const val LANDSCAPE_SEARCH_SHARE = 0.29f
-        private const val LANDSCAPE_SEARCH_GAP = 9
-        private const val LANDSCAPE_TABS = 7
         private const val EMOTICON_ROW_LANDSCAPE = 53
         /** Nhãn "Tìm kiếm" (nút tìm, chữ mờ trong ô tìm) theo bàn phím: Tiếng Việt, Hán Nôm, Tiếng Anh. */
         const val SEARCH_VI = "Tìm kiếm"

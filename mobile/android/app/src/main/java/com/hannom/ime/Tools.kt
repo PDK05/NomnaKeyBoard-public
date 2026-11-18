@@ -25,6 +25,8 @@ enum class ToolId(val label: String, val icon: Int) {
     RESIZE("Kích thước", R.drawable.ic_resize),
     ONE_HAND("Một tay", R.drawable.ic_one_hand),
     TEXT_EDIT("Chỉnh sửa văn bản", R.drawable.ic_text_edit),
+    /** Đổi bàn phím như chạm phím V / EN / 喃 (tên và quả cầu như Gboard; người dùng muốn 2026-11-18). */
+    LANGUAGE("Ngôn ngữ tiếp theo", R.drawable.ic_language),
     SETTINGS("Cài đặt", R.drawable.ic_settings);
 
     /** Tên theo bàn phím đang dùng; bàn phím chưa có tên riêng cho tiện ích thì mặc nhiên tên tiếng Anh. */
@@ -36,6 +38,7 @@ enum class ToolId(val label: String, val icon: Int) {
             ONE_HAND -> "One-handed"
             DICTIONARY -> "Dictionary"
             TEXT_EDIT -> "Text editing"
+            LANGUAGE -> "Next language"
             SETTINGS -> "Settings"
         }
         val nom = HAN_NOM_LABELS[this] ?: en
@@ -56,6 +59,7 @@ enum class ToolId(val label: String, val icon: Int) {
             ONE_HAND to "𠬠𢬣",
             DICTIONARY to "辭典",
             TEXT_EDIT to "整𢯢文本",
+            LANGUAGE to "言語接蹺",
             SETTINGS to "掑撻",
         )
     }
@@ -106,7 +110,7 @@ sealed interface ToolSlot {
 
 /**
  * Bảng tiện ích (nút ⊞ của Gboard), thay chỗ bàn phím: lưới các tiện ích chưa ghim, mỗi ô bo tròn
- * (icon + tên), chia trang vuốt ngang, chấm trang và nút ✎ ở dưới. Chạm để dùng. Nút ✎ (hay giữ một ô) vào chế độ
+ * (icon + tên), chia trang vuốt ngang, chấm trang và nút ✎ ở dưới. Chạm để dùng. Nút ✎ vào chế độ
  * sửa: "Giữ và kéo để tuỳ chỉnh", lưới trong khung viền màu nhấn, cuộn dọc; kéo thả do [InputRoot] lo.
  */
 @SuppressLint("ViewConstructor")
@@ -155,16 +159,20 @@ class ToolsPanel(
         orientation = HORIZONTAL
         gravity = Gravity.CENTER
     }
+    /**
+     * Nút ✎ như Gboard (đo trên điện thoại 2026-11-18): viên 72 x 32 dp viền mảnh, cách mép phải 24 dp; bút chì nét
+     * viền 24 dp; viền và bút cùng màu chữ mờ.
+     */
     private val editButton = ImageView(context).apply {
-        setImageResource(R.drawable.ic_edit)
+        setImageResource(R.drawable.ic_edit_outline)
         scaleType = ImageView.ScaleType.CENTER
         contentDescription = "Tuỳ chỉnh"
         setOnClickListener { onEdit() }
     }
     private val footer = FrameLayout(context).apply {
         addView(dots, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER))
-        addView(editButton, FrameLayout.LayoutParams(context.dpi(64), context.dpi(34), Gravity.END or Gravity.CENTER_VERTICAL).apply {
-            marginEnd = context.dpi(16)
+        addView(editButton, FrameLayout.LayoutParams(context.dpi(72), context.dpi(32), Gravity.END or Gravity.CENTER_VERTICAL).apply {
+            marginEnd = context.dpi(24)
         })
     }
 
@@ -180,15 +188,27 @@ class ToolsPanel(
         addView(footer, LayoutParams(LayoutParams.MATCH_PARENT, context.dpi(FOOTER)))
     }
 
+    /** Lề thêm hai bên (px) ở màn hình ngang để không tràn ra tai thỏ ([cutoutSides]; người dùng báo 2026-11-17). */
+    private var extra = 0 to 0
+
+    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+        super.onLayout(changed, l, t, r, b)
+        val sides = cutoutSides()
+        if (sides != extra) {
+            extra = sides
+            post { setPadding(extra.first, paddingTop, extra.second, paddingBottom) }
+        }
+    }
+
     /** Màu đổi thì dựng lại các ô. */
     fun applyTheme() {
         tiles.clear()
         setBackgroundColor(theme.background)
         title.setTextColor(theme.text)
-        editButton.setColorFilter(theme.text)
+        editButton.setColorFilter(theme.hintText)
         editButton.background = GradientDrawable().apply {
-            cornerRadius = context.dp(17f)
-            setStroke(context.dpi(1).coerceAtLeast(1), theme.hintText)
+            cornerRadius = context.dp(16f)
+            setStroke(context.dp(1.2f).toInt().coerceAtLeast(1), theme.hintText)
         }
         editFrame.background = GradientDrawable().apply {
             cornerRadius = context.dp(24f)
@@ -226,7 +246,7 @@ class ToolsPanel(
         val panel = layoutParams?.height ?: 0
         if (panel <= 0) return MAX_ROWS
         val gap = context.dpi(TileGrid.V_GAP)
-        val room = panel - context.dpi(FOOTER) - 2 * context.dpi(TileGrid.PADDING)
+        val room = panel - context.dpi(FOOTER) - 2 * context.dpi(TileGrid.PADDING_TOP)
         return ((room + gap) / (context.dpi(TileGrid.HEIGHT) + gap)).coerceIn(1, MAX_ROWS)
     }
 
@@ -255,7 +275,8 @@ class ToolsPanel(
     private fun makeTile(id: ToolId): View = LinearLayout(context).apply {
         orientation = HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(context.dpi(14), 0, context.dpi(12), 0)
+        // Như Gboard (đo trên điện thoại 2026-11-18): biểu tượng 28 dp cách mép ô 18 dp, chữ 16 sp cách biểu tượng 14 dp.
+        setPadding(context.dpi(18), 0, context.dpi(12), 0)
         background = GradientDrawable().apply {
             cornerRadius = context.dp(TileGrid.HEIGHT / 2f)
             setColor(theme.composeBox)
@@ -264,18 +285,24 @@ class ToolsPanel(
             setImageResource(id.icon)
             setColorFilter(theme.text)
             scaleType = ImageView.ScaleType.FIT_CENTER
-        }, LayoutParams(context.dpi(22), context.dpi(22)))
+        }, LayoutParams(context.dpi(28), context.dpi(28)))
         addView(TextView(context).apply {
             // Tên Hán Nôm có chữ ngoài BMP (𢷮, 𡱩, 𠬠, 𢬣...): dùng phông Hán Nôm đi kèm.
             text = context.hanNomText(id.label(style))
             setTextColor(theme.text)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             isSingleLine = true
-            ellipsize = android.text.TextUtils.TruncateAt.END
-        }, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = context.dpi(12) })
+            // Tên dài hơn ô (màn hình ngang: "Chỉnh sửa văn bản", "Ngôn ngữ tiếp theo") chạy ngang như bảng quảng cáo,
+            // không cắt "…" (người dùng muốn 2026-11-18); vừa ô thì đứng yên.
+            ellipsize = android.text.TextUtils.TruncateAt.MARQUEE
+            marqueeRepeatLimit = -1
+            isSelected = true
+        }, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = context.dpi(14) })
         contentDescription = id.label(style)
         setOnClickListener { if (!editing) onUse(id) }
+        // Chỉ kéo thả được trong chế độ sửa (đã ấn ✎); ngoài đó giữ ô không làm gì (người dùng muốn 2026-11-18).
         setOnLongClickListener {
+            if (!editing) return@setOnLongClickListener false
             performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
             onDrag(id)
             true
@@ -322,7 +349,8 @@ class TileGrid(context: Context, private val minRows: Int) : ViewGroup(context) 
 
     init {
         val pad = context.dpi(PADDING)
-        setPadding(pad, pad, pad, pad)
+        val padTop = context.dpi(PADDING_TOP)
+        setPadding(pad, padTop, pad, padTop)
     }
 
     private fun cellWidth(w: Int) = (w - paddingLeft - paddingRight - (columns - 1) * hGap) / columns
@@ -357,12 +385,13 @@ class TileGrid(context: Context, private val minRows: Int) : ViewGroup(context) 
     }
 
     companion object {
-        /** Chiều cao một ô (dp). */
-        const val HEIGHT = 44
-        /** Khoảng cách giữa các cột, giữa các hàng và lề lưới (dp). */
-        const val H_GAP = 12
-        const val V_GAP = 10
-        const val PADDING = 12
+        /** Chiều cao một ô (dp); như Gboard (đo trên điện thoại 2026-11-18: ô 168 px, khe 28 px, lề 84 px ở 3,5 px/dp). */
+        const val HEIGHT = 48
+        /** Khoảng cách giữa các cột, giữa các hàng, lề hai bên và lề trên / dưới của lưới (dp). */
+        const val H_GAP = 8
+        const val V_GAP = 8
+        const val PADDING = 24
+        const val PADDING_TOP = 18
 
         /** Màn hình dọc 2 cột; màn hình ngang giữ ô gần bằng bề rộng lúc dọc nên có nhiều cột hơn. */
         fun columnsFor(context: Context): Int {

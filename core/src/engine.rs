@@ -1388,7 +1388,10 @@ impl Engine {
             if PARTS[level] == Part::Final && options.iter().all(|o| o.is_empty()) {
                 continue;
             }
-            if options.len() < 2 {
+            // Phụ âm đầu luôn hỏi, kể cả chỉ có một (nh, h, kh đứng riêng, `nhan` → nh trước rồi a / ă / â; người dùng
+            // muốn 2026-11-19); âm không có phụ âm đầu thì khỏi.
+            let lone_initial = PARTS[level] == Part::Initial && options.len() == 1 && !options[0].is_empty();
+            if options.len() < 2 && !lone_initial {
                 let known = match (PARTS[level], rows.first()) {
                     (_, None) => true,
                     (Part::Syllable, Some((_, p))) => composed.starts_with(&p[4]),
@@ -2339,18 +2342,26 @@ impl Engine {
             sort_by_tone(&mut options);
             return Some((Part::Syllable, options));
         }
-        let rows = rows_of(picked);
         let start = picked.last().map_or(0, |(p, _)| *p as usize + 1);
-        // Đoạn phím của âm kế tiếp: gõ đủ âm (có nguyên âm) thì cột chỉ hỏi đổi phụ âm đầu (cả nhóm) rồi đổi dấu; chỉ gõ
-        // phụ âm đầu thì hỏi đủ các cấp, phụ âm đầu hỏi cả nhóm (người dùng muốn 2026-11-15).
+        // Đoạn phím của âm kế tiếp: hỏi đủ các cấp như âm đầu ([`Self::narrow`]: phụ âm đầu → nguyên âm → vần → phụ âm
+        // cuối → thanh), phụ âm đầu hỏi cả nhóm (người dùng muốn 2026-11-19; trước đó gõ đủ âm thì chỉ hỏi phụ âm đầu rồi
+        // ra thẳng cả âm, `nhan` không hỏi a / ă / â).
         let seg = self.next_segment(keys, locks.len());
-        let full = seg.as_ref().is_some_and(|s| full_syllable_keys(s));
+        // Âm gõ đủ (có nguyên âm): chỉ các âm khớp phần đã gõ, khác thanh / dấu mũ / móc hay khác phụ âm đầu cùng nhóm
+        // (`trung` → trung, trùng, trưng, chung…), không lẫn các vần khác của phụ âm đó (tra, tre… khi chọn tr).
+        let rows = match seg.as_ref().filter(|s| full_syllable_keys(s)) {
+            Some(seg) => {
+                let typed = self.chunk_matcher(seg);
+                rows_of(picked)
+                    .into_iter()
+                    .filter(|(_, parts, _)| typed(&parts[4]) || self.mate_matcher(seg, &parts[0]).is_some_and(|m| m(&parts[4])))
+                    .collect()
+            }
+            None => rows_of(picked),
+        };
         for level in start..PARTS.len() {
             let mut seen = HashSet::new();
             let mut options: Vec<String> = rows.iter().map(|(_, parts, _)| parts[level].clone()).filter(|v| seen.insert(v.clone())).collect();
-            if full && matches!(PARTS[level], Part::Vowel | Part::Nucleus | Part::Final) {
-                continue;
-            }
             if PARTS[level] == Part::Initial && picked.is_empty() {
                 if let Some(seg) = &seg {
                     for m in self.locked_mates(seg, &options) {
@@ -2369,15 +2380,19 @@ impl Engine {
             if PARTS[level] == Part::Final && options.iter().all(|o| o.is_empty()) {
                 continue;
             }
-            // Một lựa chọn thì khỏi hỏi, trừ cả âm có thanh (lưới đã là chữ của âm đó, vẫn đổi thanh được).
-            if options.is_empty() || (options.len() < 2 && PARTS[level] != Part::Syllable) {
+            // Một lựa chọn thì khỏi hỏi, trừ cả âm có thanh (lưới đã là chữ của âm đó, vẫn đổi thanh được) và phụ âm đầu
+            // (luôn hỏi, kể cả nh, h, kh đứng riêng; âm không có phụ âm đầu thì khỏi; 2026-11-19).
+            let lone_initial = PARTS[level] == Part::Initial && options.len() == 1 && !options[0].is_empty();
+            if options.is_empty() || (options.len() < 2 && PARTS[level] != Part::Syllable && !lone_initial) {
                 continue;
             }
+            // Phần có chữ khớp phím đã gõ trước, phần chỉ có chữ của phụ âm cùng nhóm ch/tr (thay phím) sau (cả ở cấp
+            // thanh: `trung` → trung, trùng… rồi chung, chùng…).
+            let typed = |v: &String| rows.iter().any(|(_, parts, swapped)| !swapped && parts[level] == *v);
             if PARTS[level] == Part::Syllable {
                 sort_by_tone(&mut options);
+                options.sort_by_cached_key(|v| !typed(v));
             } else {
-                // Phần có chữ khớp phím đã gõ trước, phần chỉ có chữ của phụ âm cùng nhóm ch/tr (thay phím) sau.
-                let typed = |v: &String| rows.iter().any(|(_, parts, swapped)| !swapped && parts[level] == *v);
                 options.sort_by_cached_key(|v| (!typed(v), v.chars().count(), dict::collation_key(v)));
             }
             return Some((PARTS[level], options));
@@ -3397,6 +3412,26 @@ mod tests {
     }
 
     #[test]
+    fn locked_next_syllable_asks_every_level() {
+        // Gõ cả câu, âm thứ 3 `nhan`: cột trái hỏi phụ âm đầu (nh, kể cả chỉ có một) rồi a / â, như âm đầu; không ra
+        // thẳng cả âm (người dùng báo 2026-11-19 khi gõ `cong hoa nhan dan trung hoa`).
+        let mut e = Engine::new(
+            Dictionary::from_text("共和;cộng hoà;5
+人;nhân;5
+顏;nhan;1
+閑;nhàn;1
+").0,
+        );
+        e.options.telex = true;
+        // Hai âm đầu chốt theo phím đã gõ (đúng cả dấu: cộng hoà).
+        let keys = "coongj'hoaf'nhan";
+        let locks = vec![Vec::new(); 2];
+        assert_eq!(e.narrow_locked(keys, "", &locks, &[]), Some((Part::Initial, strs(&["nh"]))));
+        let nh = [(Part::Initial, "nh".to_string())];
+        assert_eq!(e.narrow_locked(keys, "", &locks, &nh), Some((Part::Nucleus, strs(&["a", "â"]))));
+    }
+
+    #[test]
     fn picked_syllable_lists_words_containing_it() {
         let e = Engine::new(
             Dictionary::from_text("中;trung;9
@@ -3472,9 +3507,10 @@ mod tests {
         assert_eq!(narrow("c", &cư), Some((Part::Final, vec!["".into(), "c".into()])));
         let cuc = [pick(Part::Initial, "c"), pick(Part::Vowel, "ư"), pick(Part::Final, "c")];
         assert_eq!(texts(&e.candidates_narrowed("c", &cuc)), ["極"]);
-        // Đã gõ có nguyên âm: phụ âm đầu đã rõ (tr không ra chữ nào) thì khỏi hỏi; nguyên âm vẫn hỏi vì `chu` có
-        // thể là gõ tắt ch… + u… (châu); chọn u thì vần đã rõ, vào thẳng cấp còn khác nhau (ở đây là thanh).
-        assert_eq!(narrow("chu", &[]), Some((Part::Vowel, vec!["â".into(), "u".into()])));
+        // Đã gõ có nguyên âm: phụ âm đầu vẫn hỏi trước (chỉ có ch, tr không ra chữ nào; luôn hỏi từ 2026-11-19); nguyên
+        // âm vẫn hỏi vì `chu` có thể là gõ tắt ch… + u… (châu); chọn u thì vần đã rõ, vào thẳng cấp còn khác nhau (thanh).
+        assert_eq!(narrow("chu", &[]), Some((Part::Initial, strs(&["ch"]))));
+        assert_eq!(narrow("chu", &[pick(Part::Initial, "ch")]), Some((Part::Vowel, vec!["â".into(), "u".into()])));
         let chu = [pick(Part::Initial, "ch"), pick(Part::Vowel, "u")];
         assert_eq!(narrow("chu", &chu), Some((Part::Syllable, vec!["chu".into(), "chú".into()])));
         // `q` mặc định là qu (mọi chữ q đều là qu-): cột không có lựa chọn q, qu đứng đầu, rồi phụ âm cùng nhóm có chữ (c).
@@ -3525,8 +3561,8 @@ mod tests {
         assert_eq!(texts(&e.candidates_narrowed("dif", &pick(Part::Initial, "đ"))), ["𠫾", "提"]);
         // Một chiều: `ddif` đì không hỏi d.
         assert!(e.narrow("ddif", &[]).is_none_or(|(_, o)| !o.contains(&"d".to_string())));
-        // Phụ âm cùng nhóm không ra chữ nào thì ẩn: `cura` chỉ có của, không hỏi phụ âm đầu.
-        assert!(e.narrow("cura", &[]).is_none_or(|(p, _)| p != Part::Initial));
+        // Phụ âm cùng nhóm không ra chữ nào thì ẩn: `cura` chỉ có của, cột chỉ có c (phụ âm đầu vẫn luôn hỏi, 2026-11-19).
+        assert_eq!(e.narrow("cura", &[]), Some((Part::Initial, strs(&["c"]))));
     }
 
     #[test]
@@ -3688,7 +3724,9 @@ mod tests {
         e.options.telex = true;
         // Đã gõ thanh (`ddos` đó) vẫn chọn được chữ khác thanh, khác dấu mũ / móc (đỏ, đồ), thay đúng chữ đã gõ;
         // không lẫn vần khác của chữ gõ dở (đoàn).
-        assert_eq!(e.narrow("ddos", &[]), Some((Part::Vowel, vec!["o".into(), "ô".into()])));
+        // Phụ âm đầu luôn hỏi trước, kể cả chỉ có đ (2026-11-19).
+        assert_eq!(e.narrow("ddos", &[]), Some((Part::Initial, strs(&["đ"]))));
+        assert_eq!(e.narrow("ddos", &[(Part::Initial, "đ".to_string())]), Some((Part::Vowel, vec!["o".into(), "ô".into()])));
         let o = [(Part::Vowel, "o".to_string())];
         // Thanh theo thứ tự cố định: ngang, huyền, sắc, hỏi, ngã, nặng.
         assert_eq!(e.narrow("ddos", &o), Some((Part::Syllable, strs(&["đo", "đó", "đỏ"]))));

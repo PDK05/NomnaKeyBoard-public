@@ -588,6 +588,12 @@ trên bàn phím, không nháy khi bàn phím đang mở; trang danh sách ngôn
 - Màn hình ngang: khung chỉnh kích thước lùi khỏi tai thỏ như các phím.
 - Khung kính: mốc 12 lần xoá, chuỗi dài không dấu cách hiện 13 ký tự (mục ở trên); dòng phụ trang từ điển không tách
   "A → Z" sang hai dòng.
+- **Cột chọn nhanh** (người dùng duyệt 2026-11-19, APK của release thay lại 2026-11-22): mọi âm, kể cả các âm sau trong
+  câu (`cong hoa nhan dan trung hoa`), hỏi đủ các cấp phụ âm đầu → nguyên âm → vần → phụ âm cuối → thanh như âm đầu.
+  Bỏ quy tắc 2026-11-15 "gõ đủ âm thì chỉ hỏi phụ âm đầu rồi ra thẳng cả âm" (`nhan` không hỏi a / ă / â). Phụ âm đầu
+  luôn hỏi, kể cả chỉ có một (nh, h, kh, đ…); âm không có phụ âm đầu thì khỏi. Âm sau gõ đủ chỉ giữ các âm khớp phần đã
+  gõ (khác thanh, dấu mũ / móc, phụ âm cùng nhóm): chọn tr cho `trung` không còn lẫn tra, tre…; ở cấp thanh, âm của phụ
+  âm đã gõ đứng trước (trung… rồi chung…).
 
 Chưa đo: thời gian lõi quét từ điển tìm từ chứa âm đã chọn (~36.600 mục mỗi lần dựng lưới); bài thử lag kinh điển chưa
 chạy lại sau đợt này.

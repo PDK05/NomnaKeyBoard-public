@@ -150,7 +150,7 @@ class SettingsActivity : Activity() {
         }
         section(c, tr("Gõ thử", "Try it", "𢱗試"))
         addView(EditText(context).apply {
-            hint = tr("Gõ thử ở đây", "Type here to try", "𢱗試於低")
+            hint = hanNomText(tr("Gõ thử ở đây", "Type here to try", "𢱗試於低"))
             setTextColor(c.text)
             setHintTextColor(c.summary)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
@@ -164,7 +164,7 @@ class SettingsActivity : Activity() {
     /** Danh sách bàn phím đã thêm (như "Ngôn ngữ" của Gboard): mỗi dòng một ngôn ngữ và bố cục. */
     private fun languagesPage() = settingsPage(
         tr("Ngôn ngữ", "Languages", "言語"),
-        action = BarAction(R.drawable.ic_edit, tr("Sửa", "Edit", "𢯢")) { open(Page.LANGUAGES_EDIT) },
+        action = BarAction(R.drawable.ic_edit, tr("Sửa", "Edit")) { open(Page.LANGUAGES_EDIT) },
         fab = Fab(tr("Thêm bàn phím", "Add keyboard", "添盤柉"), R.drawable.ic_add) { open(Page.ADD_KEYBOARD) },
     ) { c ->
         // Ngôn ngữ ứng dụng (chữ trong ứng dụng cài đặt), đầu trang như người dùng muốn 2026-11-18.
@@ -196,7 +196,7 @@ class SettingsActivity : Activity() {
         val checked = mutableSetOf<Int>()
         fun build() {
             val list = settings.keyboards
-            settingsPage(tr("Ngôn ngữ", "Languages", "言語"), action = BarAction(R.drawable.ic_delete, tr("Xoá", "Delete", "𫨮")) {
+            settingsPage(tr("Ngôn ngữ", "Languages", "言語"), action = BarAction(R.drawable.ic_delete, tr("Xoá", "Delete")) {
                 // Đọc lại danh sách: kéo đổi thứ tự lưu ngay mà không dựng lại trang.
                 val current = settings.keyboards
                 when {
@@ -592,7 +592,7 @@ class SettingsActivity : Activity() {
             .show()
     }
 
-    private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
+    private fun toast(text: String) = Toast.makeText(this, hanNomText(text), Toast.LENGTH_SHORT).show()
 
     companion object {
         private const val REQUEST_ADD = 2

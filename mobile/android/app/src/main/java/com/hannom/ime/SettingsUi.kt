@@ -164,7 +164,7 @@ fun Activity.settingsPage(
     val backButton = ImageView(this).apply {
         setImageResource(R.drawable.ic_arrow_back)
         setColorFilter(colors.text)
-        contentDescription = tr("Quay lại", "Back", "𫏓徠")
+        contentDescription = tr("Quay lại", "Back")
         scaleType = ImageView.ScaleType.CENTER
         background = iconRipple(colors)
         setOnClickListener { finish() }
@@ -781,7 +781,8 @@ fun LinearLayout.reorderList(
             setImageResource(R.drawable.ic_drag_handle)
             setColorFilter(colors.icon)
             scaleType = ImageView.ScaleType.CENTER
-            contentDescription = context.tr("Kéo để đổi thứ tự", "Drag to reorder", "捁抵𢷮次序")
+            // Nhãn ẩn cho TalkBack, không hiện trên màn hình: không cần chữ Nôm (người dùng 2026-11-22), Hán Nôm thì đọc tiếng Việt.
+            contentDescription = context.tr("Kéo để đổi thứ tự", "Drag to reorder")
         }
         row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL

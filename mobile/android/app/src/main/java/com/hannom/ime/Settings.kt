@@ -214,17 +214,23 @@ class Settings(context: Context) {
 
     /** Bàn phím một tay: khoảng cách (dp) từ mép màn hình phía bàn phím dồn về (kéo ✥ sang ngang). */
     var oneHandShift: Int
-        get() = prefs.getInt("one_hand_shift", 0).coerceAtLeast(0)
+        get() = prefs.getInt("one_hand_shift", DEFAULT_ONE_HAND_SHIFT).coerceAtLeast(0)
         set(v) = prefs.edit().putInt("one_hand_shift", v).apply()
 
     /**
      * Bàn phím một tay (màn hình dọc): chiều cao hàng phím (dp) và khoảng trống dưới đáy (dp) đã kéo trong "Kích thước",
      * nhớ riêng với bàn phím đầy đủ (người dùng muốn 2026-11-18): bấm phóng to thì bàn phím đầy đủ trở lại đúng cỡ và
-     * chỗ cũ. Chưa chỉnh lần nào thì theo bàn phím đầy đủ.
+     * chỗ cũ. Chưa chỉnh lần nào thì theo bàn phím đầy đủ, thấp hơn như Gboard: bước hàng chữ một tay mặc định ~148,75
+     * px so với 161 px của bàn phím đầy đủ (đo 2026-11-22), tức 42,5 dp khi bàn phím đầy đủ ở mức "Vừa". Lưu số lẻ (dp):
+     * làm tròn tới 1 dp là lệch Gboard 1–2 px mỗi hàng. Bản cũ lưu số nguyên ở "one_hand_row_height" vẫn đọc được.
      */
-    var oneHandRowHeight: Int
-        get() = prefs.getInt("one_hand_row_height", rowHeight).coerceIn(MIN_ROW_HEIGHT, MAX_ROW_HEIGHT)
-        set(v) = prefs.edit().putInt("one_hand_row_height", v).apply()
+    var oneHandRowHeight: Float
+        get() = (
+            if (prefs.contains("one_hand_row")) prefs.getFloat("one_hand_row", 0f)
+            else if (prefs.contains("one_hand_row_height")) prefs.getInt("one_hand_row_height", 0).toFloat()
+            else rowHeight * ONE_HAND_ROW_SHARE
+            ).coerceIn(MIN_ROW_HEIGHT.toFloat(), MAX_ROW_HEIGHT.toFloat())
+        set(v) = prefs.edit().putFloat("one_hand_row", v).remove("one_hand_row_height").apply()
     var oneHandBottomGap: Int
         get() = prefs.getInt("one_hand_bottom_gap", bottomGap).coerceIn(0, MAX_BOTTOM_GAP)
         set(v) = prefs.edit().putInt("one_hand_bottom_gap", v).apply()
@@ -305,15 +311,23 @@ class Settings(context: Context) {
          * 2026-11-18: bước hàng chữ 46 dp; trước là 50).
          */
         val ROW_HEIGHTS = intArrayOf(40, 46, 52)
-        const val MIN_ROW_HEIGHT = 36
-        const val MIN_LANDSCAPE_ROW_HEIGHT = 24
-        const val MAX_ROW_HEIGHT = 72
+        /** Hàng chữ màn hình dọc thấp / cao nhất (dp): Gboard 111 / 261 px = 31,7 / 74,6 dp (đo 2026-11-22; trước 36 / 72). */
+        const val MIN_ROW_HEIGHT = 32
+        const val MIN_LANDSCAPE_ROW_HEIGHT = 25
+        const val MAX_ROW_HEIGHT = 75
         /**
-         * Bề rộng bàn phím một tay so với màn hình: mặc định = lớn nhất (Gboard chừng 87%) và nhỏ nhất (Gboard 75%: khung
-         * 930 / 1240 px, đo 2026-11-18).
+         * Bề rộng bàn phím một tay so với màn hình: mặc định = lớn nhất (Gboard: khung 1075 / 1240 px, đo 2026-11-22;
+         * trước 0,87) và nhỏ nhất (Gboard 75%: khung 930 / 1240 px, đo 2026-11-18).
          */
-        const val DEFAULT_ONE_HAND_WIDTH = 0.87f
+        const val DEFAULT_ONE_HAND_WIDTH = 0.867f
         const val MIN_ONE_HAND_WIDTH = 0.75f
+        /**
+         * Bàn phím một tay mặc định: hàng chữ [DEFAULT_ONE_HAND_ROW] dp (= [ONE_HAND_ROW_SHARE] × hàng "Vừa"), cách mép
+         * màn hình [DEFAULT_ONE_HAND_SHIFT] dp (Gboard: khung cách mép 14 px, kéo ✥ thì sát mép được). Đo 2026-11-22.
+         */
+        const val ONE_HAND_ROW_SHARE = 42.5f / 46f
+        const val DEFAULT_ONE_HAND_ROW = 42.5f
+        const val DEFAULT_ONE_HAND_SHIFT = 4
 
         /** Giá trị "mặc định của hệ thống" cho [volume], [vibrationMs], [fontSize]. */
         const val DEFAULT = -1

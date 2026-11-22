@@ -56,6 +56,253 @@ chắn muốn xóa chủ đề không?" Không / Có; xoá giao diện đang dù
 style sheet trong APK Gboard). Chạm ô → bảng xem trước với công tắc "Đường viền phím" (mặc định bật) và Hủy / Áp dụng.
 Không viền phím: chỉ phím cách, `?123` và Enter có nền; thanh trên cùng đậm hơn. Không có giao diện ảnh riêng, không
 có "Màu tự động".
+- Icon công cụ (nút ⊞, các nút ghim, nút góc, icon trong ô bảng tiện ích) tô màu chữ phủ 60% như Gboard (đo 2026-11-22:
+  (169,171,173) trên thanh, (182,183,185) trong ô, giao diện Google xanh tối); chữ trong ô vẫn trắng hẳn. Bảng tiện ích
+  to theo "Cỡ chữ" như Gboard: ô giữ cao 48 dp, icon (tâm cách mép ô 30 dp) ×0,85 / 1 / 1,01 / 1,03 / 1,05 / 1,22 / 1,33
+  ở 85 / 100 / 115 / 130 / 150 / 180 / 200%, chữ phóng theo tỉ lệ của chữ 14 sp (200%: ×1,86), luôn bắt đầu ở 60 dp.
+
+#### Màu con trỏ và dấu cách cuối của khung gõ (người dùng chọn 2026-11-23, đã làm)
+
+Gõ xong một âm và ấn cách một lần, cuối khung gõ có con trỏ nháy (màu nhấn của giao diện) và **ngay sau con trỏ** là
+dấu cách tô nền ("dấu cách chặn"; hiện tại đỏ `#E53935` đục 70%, phủ lên nền khung gõ). Ở vài giao diện "Màu", con trỏ
+gần như trùng màu với nền đỏ. Người dùng giữ nguyên các giao diện 1–4, 6–10, 15–18 (số thứ tự theo ô trong mục Màu).
+
+Chỉ đổi màu con trỏ / nền dấu cách của khung gõ, không đổi màu nhấn (màu nhấn còn dùng cho phím Enter, chữ đã chọn
+dở…). Nền dấu cách không dùng vàng (vàng là ô âm cột trái đang trỏ). Tương phản tính theo WCAG (≥ 3 là thấy rõ, 1 là
+trùng màu). Mỗi hình: cột trái là phương án, khung giữa là con trỏ rồi dấu cách cuối, khung phải là con trỏ giữa chữ.
+
+| # | Giao diện | Nền khung gõ | Con trỏ hiện tại | Nền dấu cách hiện tại | Trỏ / cách |
+|---|-----------|--------------|------------------|-----------------------|------------|
+| 5 | Đỏ | `#D04E4E` | `#F44336` | `#DF3F3C` | 1,16 |
+| 11 | Hồng | `#BB3E75` | `#F50057` | `#D83A48` | 1,09 |
+| 12 | Hồng nhạt | `#FAD2E0` | `#E36087` | `#EB6768` | 1,06 |
+| 13 | Cát | `#F0EBE7` | `#FF7276` | `#E86E6A` | 1,15 |
+| 14 | Nâu | `#6D5853` | `#8D6E63` | `#C1423E` | 1,10 |
+
+**5 · Đỏ — đã chọn A** (người dùng muốn một bộ màu khác cả con trỏ lẫn dấu cách). Dạng: con trỏ + nền dấu cách (màu
+phủ, độ đục → màu sau khi phủ), tương phản trỏ / cách:
+- A: trắng `#FFFFFF` + đỏ sẫm `#5D0F0F` 85% → `#6E1818` (11,62)
+- B: trắng `#FFFFFF` + tím than `#1A237E` 70% → `#513070` (10,47)
+- C: trắng `#FFFFFF` + xám xanh `#37474F` 70% → `#65494F` (8,02)
+- D: đen `#000000` + trắng 60% → hồng phấn `#ECB8B8` (12,11)
+
+![Giao diện 5 – Đỏ](docs/caret-colors/theme-05-red.svg)
+
+**11 · Hồng — đã chọn A** (con trỏ hồng rất nhạt `#FFDBE8`; nền dấu cách):
+- A: mận sẫm `#4A0E2E` 80% → `#61183C` (9,71)
+- B: tím `#311B92` 70% → `#5A2689` (7,98)
+- C: xám xanh `#37474F` 70% → `#5F445A` (6,72)
+- D: đen 50% → `#5E1F3A` (9,55)
+
+![Giao diện 11 – Hồng](docs/caret-colors/theme-11-pink.svg)
+
+**12 · Hồng nhạt — đã chọn D** (giữ con trỏ hồng `#E36087`; nền dấu cách xám). Con trỏ hồng và nền xám khác sắc
+màu nên vẫn phân biệt được dù số tương phản độ sáng thấp:
+- A: xám rất nhạt `#BDBDBD` 80% → `#C9C1C4` (1,89)
+- B: xám nhạt `#9E9E9E` 70% → `#BAAEB2` (1,56)
+- C: xám vừa `#757575` 60% → `#AA9AA0` (1,25)
+- D: xám đậm `#212121` 70% → `#62565A` (2,10)
+
+![Giao diện 12 – Hồng nhạt](docs/caret-colors/theme-12-light_pink.svg)
+
+**13 · Cát — đã chọn D:** con trỏ đỏ đậm `#660003`, giữ nền dấu cách đỏ (trỏ / cách 4,39; trỏ / khung 11,33).
+
+![Giao diện 13 – Cát](docs/caret-colors/theme-13-sand.svg)
+
+**14 · Nâu — đã chọn C:** con trỏ be nhạt `#EAE3E1`, giữ nền dấu cách đỏ (trỏ / cách 4,03; trỏ / khung 5,23).
+
+![Giao diện 14 – Nâu](docs/caret-colors/theme-14-brown.svg)
+
+**Đợt 2 (người dùng chọn 2026-11-23, đã làm): giao diện 6, 7, 8, 10, 15.** Con trỏ hiện tại khó thấy trên nền đỏ (tương phản trỏ /
+cách: 6 Xanh lá 1,18; 7 Xanh mòng két 2,13; 8 Xanh dương 1,61; 10 Tím đậm 1,40; 15 Xanh xám 1,52). Mỗi giao diện: A, B
+chỉ đổi con trỏ (giữ dấu cách đỏ); C, D đổi cả nền dấu cách. Số trong ngoặc: trỏ / cách · trỏ / khung.
+
+**6 · Xanh lá** (khung `#64B168`):
+- A: đen `#000000` + giữ đỏ (4,84 · 8,03)
+- B: lục rất đậm `#143816` + giữ đỏ (3,01 · 5,00)
+- C: đen `#000000` + trắng 60% → lục rất nhạt `#C1E0C3` (14,72 · 8,03)
+- D: lục rất đậm `#143816` + lục rất nhạt `#C1E0C3` (9,16 · 5,00)
+
+![Giao diện 6 – Xanh lá](docs/caret-colors/theme-06-green.svg)
+
+**7 · Xanh mòng két** (khung `#2E8479`):
+- A: trắng `#FFFFFF` + giữ đỏ (5,19 · 4,47)
+- B: mòng két rất nhạt `#DBF0EE` + giữ đỏ (4,38 · 3,77)
+- C: trắng + mòng két sẫm `#004C43` 85% → `#07544B` (8,83 · 4,47)
+- D: trắng + tím than `#1A237E` 70% → `#20407C` (10,07 · 4,47)
+
+![Giao diện 7 – Xanh mòng két](docs/caret-colors/theme-07-teal.svg)
+
+**8 · Xanh dương** (khung `#3F80CB`):
+- A: trắng `#FFFFFF` + giữ đỏ (5,02 · 4,07)
+- B: đen `#000000` + giữ đỏ (4,18 · 5,16)
+- C: trắng + xanh sẫm `#082445` 85% → `#103259` (12,94 · 4,07)
+- D: đen + trắng 60% → xanh rất nhạt `#B2CCEA` (12,72 · 5,16)
+
+![Giao diện 8 – Xanh dương](docs/caret-colors/theme-08-blue.svg)
+
+**10 · Tím đậm** (khung `#664DB1`):
+- A: trắng `#FFFFFF` + giữ đỏ (5,15 · 6,44)
+- B: tím rất nhạt `#E2DAF1` + giữ đỏ (3,81 · 4,76)
+- C: trắng + tím sẫm `#1B0F3E` 85% → `#26184F` (15,84 · 6,44)
+- D: trắng + đỏ sẫm `#5D0F0F` 85% → `#5E1827` (12,84 · 6,44)
+
+![Giao diện 10 – Tím đậm](docs/caret-colors/theme-10-deep_purple.svg)
+
+**15 · Xanh xám** (khung `#5B686E`):
+- A: trắng `#FFFFFF` + giữ đỏ (5,09 · 5,75)
+- B: xám xanh rất nhạt `#E2E7E9` + giữ đỏ (4,08 · 4,61)
+- C: trắng + xám sẫm `#1F292D` 85% → `#283237` (13,11 · 5,75)
+- D: trắng + đỏ sẫm `#5D0F0F` 85% → `#5D1C1D` (12,73 · 5,75)
+
+![Giao diện 15 – Xanh xám](docs/caret-colors/theme-15-blue_grey.svg)
+
+**Đợt 3 (người dùng chọn 2026-11-23, đã làm): giao diện 17, 18.** Cả hai có khung gõ `#5C5C5C`, nền bàn phím `#161616`, chữ trắng;
+tương phản trỏ / cách hiện tại: 17 Holo xanh 2,22 (trỏ `#003D5C`), 18 Holo trắng 2,84 (trỏ `#282828`). Số trong ngoặc:
+trỏ / cách · trỏ / khung.
+
+**17 · Holo xanh:**
+- A: trắng `#FFFFFF` + giữ đỏ (5,20 · 6,69)
+- B: xanh rất nhạt `#B3E5FC` + giữ đỏ (3,84 · 4,95)
+- C: xanh rất nhạt `#B3E5FC` + xanh Holo sẫm `#003D5C` 85% → `#0E425C` (7,95 · 4,95)
+- D: đen `#000000` + xanh Holo `#33B5E5` 80% → `#3BA3CA` (7,28 · 3,14)
+
+![Giao diện 17 – Holo xanh](docs/caret-colors/theme-17-holo_blue.svg)
+
+**18 · Holo trắng:**
+- A: trắng `#FFFFFF` + giữ đỏ (5,20 · 6,69)
+- B: đen `#000000` + giữ đỏ (4,04 · 3,14)
+- C: trắng + xám sẫm `#212121` 70% → `#333333` (12,63 · 6,69)
+- D: đen + trắng 60% → xám nhạt `#BEBEBE` (11,30 · 3,14)
+
+![Giao diện 18 – Holo trắng](docs/caret-colors/theme-18-holo_white.svg)
+
+Lựa chọn của người dùng: **5A, 11A, 12D, 13D, 14C**, đợt 2: **6D, 7C, 8C, 10C, 15C**, đợt 3: **17C, 18C** (18 lúc đầu chọn A, đổi sang C cùng ngày). Trong code: `ThemeSpec.CARET` / `ThemeSpec.TRAILING` (`Theme.kt`),
+khung gõ dùng `KeyboardTheme.caret` / `KeyboardTheme.trailingSpace`; các giao diện khác giữ con trỏ màu nhấn và dấu cách
+đỏ `#E53935` đục 70%.
+
+#### Màu nhấn trong bảng "Thay đổi bàn phím" (người dùng chọn 2026-11-23, đã làm)
+
+Bảng hiện khi chạm phím ngôn ngữ / nút "Ngôn ngữ tiếp theo" (`KeyboardDialog.kt`): thẻ nền màu phím chữ, dòng đang
+chọn có ✓, chữ và nền viên màu nhấn (nền viên = màu nhấn đục 19%), nút "Cài đặt ngôn ngữ" màu nhấn. Ở nhiều giao diện
+"Màu", màu nhấn gần màu thẻ nên dòng đang chọn và nút chìm hẳn. Số: tương phản chữ màu nhấn với nền viên của dòng · với
+thẻ (≥ 3 là thấy rõ; chữ thường nên ≥ 4,5). Ảnh: nền là bàn phím đã tối đi như lúc bảng hiện; thẻ trái là hiện tại.
+
+Phương án đổi cả màu chữ / ✓ / nút lẫn nền viên (đổi chữ thôi thì nền viên màu nhấn nhạt vẫn làm chữ chìm). Chữ cái có
+cùng nghĩa ở mọi giao diện: **A** màu nhấn đậm hơn (thẻ sáng) hoặc nhạt hơn (thẻ tối), cùng sắc; **B** màu con trỏ khung gõ
+đã chọn ở trên (chỉ có khi khác màu chữ); **C** màu chữ của giao diện. Nền viên đi kèm: "nền nhấn cũ" (giữ như hiện tại),
+"nền tối" (đen đục 22% phủ lên thẻ), "nền sáng" (trắng đục 40%), "nền cùng màu chữ" (màu chữ mới đục 19%). Phương án C
+làm dòng đang chọn cùng màu chữ với các dòng khác, chỉ khác ở ✓ và nền viên. 6C chỉ đạt 2,61 với thẻ (chữ trắng trên lục
+nhạt).
+
+**1 · Material sáng** (thẻ `#FBFBFC`, nhấn `#5CB5AB`): chữ/dòng 2,03 · chữ/thẻ 2,35 — **không nổi bật**
+- A: `#397E77` (nhấn đậm hơn · nền nhấn cũ → `#DDEEED`): 3,96 · 4,59
+- C: `#061D28` (= màu chữ · nền nhấn cũ → `#DDEEED`): 14,44 · 16,73
+
+![Bảng đổi bàn phím – 1 Material sáng](docs/keyboard-dialog/dialog-01-material_light.svg)
+
+**2 · Material tối** (thẻ `#404A50`, nhấn `#6EACA8`): chữ/dòng 2,72 · chữ/thẻ 3,51 — **không nổi bật**
+- A: `#91C0BD` (nhấn nhạt hơn · nền tối → `#323A3E`): 5,79 · 4,53
+- C: `#FFFFFF` (= màu chữ · nền tối → `#323A3E`): 11,60 · 9,08
+
+![Bảng đổi bàn phím – 2 Material tối](docs/keyboard-dialog/dialog-02-material_dark.svg)
+
+**3 · Google xanh sáng** (thẻ `#FFFFFF`, nhấn `#1A73E8`): chữ/dòng 3,52 · chữ/thẻ 4,51 — đạt, giữ nguyên
+
+![Bảng đổi bàn phím – 3 Google xanh sáng](docs/keyboard-dialog/dialog-03-google_blue_light.svg)
+
+**4 · Google xanh tối** (thẻ `#484C4F`, nhấn `#5E97F6`): chữ/dòng 2,42 · chữ/thẻ 2,99 — **không nổi bật**
+- A: `#9ABDF9` (nhấn nhạt hơn · nền tối → `#383B3E`): 5,91 · 4,55
+- C: `#FFFFFF` (= màu chữ · nền tối → `#383B3E`): 11,27 · 8,67
+
+![Bảng đổi bàn phím – 4 Google xanh tối](docs/keyboard-dialog/dialog-04-google_blue_dark.svg)
+
+**5 · Đỏ** (thẻ `#D04E4E`, nhấn `#F44336`): chữ/dòng 1,14 · chữ/thẻ 1,17 — **không nổi bật**
+- C: `#FFFFFF` (= màu chữ · nền tối → `#A23D3D`): 6,42 · 4,30
+
+![Bảng đổi bàn phím – 5 Đỏ](docs/keyboard-dialog/dialog-05-red.svg)
+
+**6 · Xanh lá** (thẻ `#64B168`, nhấn `#2D7D32`): chữ/dòng 1,74 · chữ/thẻ 1,96 — **không nổi bật**
+- B: `#143816` (= màu con trỏ · nền sáng → `#A2D0A4`): 7,53 · 5,00
+- C: `#FFFFFF` (= màu chữ · nền tối → `#4E8A51`): 4,14 · 2,61
+
+![Bảng đổi bàn phím – 6 Xanh lá](docs/keyboard-dialog/dialog-06-green.svg)
+
+**7 · Xanh mòng két** (thẻ `#2E8479`, nhấn `#4DB6AC`): chữ/dòng 1,63 · chữ/thẻ 1,83 — **không nổi bật**
+- C: `#FFFFFF` (= màu chữ · nền tối → `#24675E`): 6,61 · 4,47
+
+![Bảng đổi bàn phím – 7 Xanh mòng két](docs/keyboard-dialog/dialog-07-teal.svg)
+
+**8 · Xanh dương** (thẻ `#3F80CB`, nhấn `#2196F3`): chữ/dòng 1,24 · chữ/thẻ 1,30 — **không nổi bật**
+- C: `#FFFFFF` (= màu chữ · nền tối → `#31649E`): 6,09 · 4,07
+
+![Bảng đổi bàn phím – 8 Xanh dương](docs/keyboard-dialog/dialog-08-blue.svg)
+
+**9 · Xanh lơ** (thẻ `#ACE9F1`, nhấn `#00ACC1`): chữ/dòng 1,79 · chữ/thẻ 2,04 — **không nổi bật**
+- A: `#006D7A` (nhấn đậm hơn · nền cùng màu chữ → `#8CD2DB`): 3,56 · 4,52
+- C: `#333333` (= màu chữ · nền cùng màu chữ → `#95C7CD`): 6,82 · 9,43
+
+![Bảng đổi bàn phím – 9 Xanh lơ](docs/keyboard-dialog/dialog-09-cyan.svg)
+
+**10 · Tím đậm** (thẻ `#664DB1`, nhấn `#9575CD`): chữ/dòng 1,56 · chữ/thẻ 1,75 — **không nổi bật**
+- A: `#DFD6F0` (nhấn nhạt hơn · nền tối → `#503C8A`): 6,38 · 4,60
+- C: `#FFFFFF` (= màu chữ · nền tối → `#503C8A`): 8,92 · 6,44
+
+![Bảng đổi bàn phím – 10 Tím đậm](docs/keyboard-dialog/dialog-10-deep_purple.svg)
+
+**11 · Hồng** (thẻ `#BB3E75`, nhấn `#F50057`): chữ/dòng 1,23 · chữ/thẻ 1,24 — **không nổi bật**
+- A: `#FFEBF2` (nhấn nhạt hơn · nền tối → `#92305B`): 6,59 · 4,54
+- B: `#FFDBE8` (= màu con trỏ · nền tối → `#92305B`): 5,92 · 4,08
+- C: `#FFFFFF` (= màu chữ · nền tối → `#92305B`): 7,51 · 5,17
+
+![Bảng đổi bàn phím – 11 Hồng](docs/keyboard-dialog/dialog-11-pink.svg)
+
+**12 · Hồng nhạt** (thẻ `#FAD2E0`, nhấn `#E36087`): chữ/dòng 2,08 · chữ/thẻ 2,44 — **không nổi bật**
+- A: `#B6204D` (nhấn đậm hơn · nền nhấn cũ → `#F6BDCF`): 3,97 · 4,65
+- C: `#333333` (= màu chữ · nền nhấn cũ → `#F6BDCF`): 7,88 · 9,24
+
+![Bảng đổi bàn phím – 12 Hồng nhạt](docs/keyboard-dialog/dialog-12-light_pink.svg)
+
+**13 · Cát** (thẻ `#F0EBE7`, nhấn `#FF7276`): chữ/dòng 1,91 · chữ/thẻ 2,24 — **không nổi bật**
+- A: `#D60006` (nhấn đậm hơn · nền nhấn cũ → `#F3D4D2`): 3,93 · 4,59
+- B: `#660003` (= màu con trỏ · nền nhấn cũ → `#F3D4D2`): 9,68 · 11,33
+- C: `#1E1E1E` (= màu chữ · nền nhấn cũ → `#F3D4D2`): 12,03 · 14,08
+
+![Bảng đổi bàn phím – 13 Cát](docs/keyboard-dialog/dialog-13-sand.svg)
+
+**14 · Nâu** (thẻ `#6D5853`, nhấn `#8D6E63`): chữ/dòng 1,34 · chữ/thẻ 1,43 — **không nổi bật**
+- A: `#DDD3CF` (nhấn nhạt hơn · nền tối → `#554541`): 6,18 · 4,51
+- B: `#EAE3E1` (= màu con trỏ · nền tối → `#554541`): 7,16 · 5,23
+- C: `#FFFFFF` (= màu chữ · nền tối → `#554541`): 9,08 · 6,62
+
+![Bảng đổi bàn phím – 14 Nâu](docs/keyboard-dialog/dialog-14-brown.svg)
+
+**15 · Xanh xám** (thẻ `#5B686E`, nhấn `#78909C`): chữ/dòng 1,54 · chữ/thẻ 1,72 — **không nổi bật**
+- A: `#E2E7E9` (nhấn nhạt hơn · nền tối → `#475156`): 6,53 · 4,61
+- C: `#FFFFFF` (= màu chữ · nền tối → `#475156`): 8,14 · 5,75
+
+![Bảng đổi bàn phím – 15 Xanh xám](docs/keyboard-dialog/dialog-15-blue_grey.svg)
+
+**16 · Đen** (thẻ `#2E2E2E`, nhấn `#80CBC4`): chữ/dòng 4,83 · chữ/thẻ 7,28 — đạt, giữ nguyên
+
+![Bảng đổi bàn phím – 16 Đen](docs/keyboard-dialog/dialog-16-black.svg)
+
+**17 · Holo xanh** (thẻ `#5C5C5C`, nhấn `#003D5C`): chữ/dòng 1,53 · chữ/thẻ 1,72 — **không nổi bật**
+- A: `#99DDFF` (nhấn nhạt hơn · nền tối → `#484848`): 6,16 · 4,50
+- B: `#B3E5FC` (= màu con trỏ · nền tối → `#484848`): 6,76 · 4,95
+- C: `#FFFFFF` (= màu chữ · nền tối → `#484848`): 9,15 · 6,69
+
+![Bảng đổi bàn phím – 17 Holo xanh](docs/keyboard-dialog/dialog-17-holo_blue.svg)
+
+**18 · Holo trắng** (thẻ `#5C5C5C`, nhấn `#282828`): chữ/dòng 1,89 · chữ/thẻ 2,20 — **không nổi bật**
+- A: `#D4D4D4` (nhấn nhạt hơn · nền nhấn cũ → `#525252`): 5,27 · 4,51
+- C: `#FFFFFF` (= màu chữ · nền nhấn cũ → `#525252`): 7,81 · 6,69
+
+![Bảng đổi bàn phím – 18 Holo trắng](docs/keyboard-dialog/dialog-18-holo_white.svg)
+
+Lựa chọn của người dùng: **1A, 2A, 4A, 5C, 6C, 7C, 8C, 9A, 10A, 11A, 12A, 13A, 14A, 15A, 17A, 18A**; 3 và 16 giữ
+nguyên. Trong code: `ThemeSpec.DIALOG` (`Theme.kt`) → `KeyboardTheme.dialogAccent` / `dialogRow`, dùng ở
+`KeyboardDialog.kt`.
 
 ### F2. Gõ Quốc ngữ & Hán Nôm
 
@@ -101,13 +348,38 @@ chốt âm ở `t…` → `t` (không phải `tôi`); chốt khi đã chọn t�
 (người dùng đổi 2026-11-18, thay quy tắc cũ `trung` chọn ch → chung). Bật 𡨸單
 cũng có chữ Latin ở vị trí thứ 2. Không còn phân biệt chữ phổ biến / chữ không phải tiếng Việt (`lag`, `alo`,
 `chunom` như nhau).
+- **Gợi ý quá dài** (người dùng muốn 2026-11-23): bàn phím Hán Nôm đo từng gợi ý ở cỡ chữ thật (theo "Cỡ chữ"); gợi ý
+nào rộng hơn ô của nó trên thanh thì xuống bảng thả, thanh xếp lại, không cắt "…" (trước đây ô chữ Latin tính ở cỡ
+100% nên cỡ to bị "…"). Bàn phím Quốc ngữ / tiếng Anh như Gboard (đo 2026-11-23, Cỡ chữ 200%): thanh 3 ô đều nhau,
+mỗi từ ít nhất một ô; còn chỗ (ít từ, từ ngắn) thì từ dài giãn ra vừa chữ, không đủ chỗ cho mọi từ thì ô đều nhau.
+Từ không vừa ô thì ép hẹp chữ theo chiều ngang như Gboard (cỡ chữ thường: `experiences` ép còn ~0,68 vẫn hiện đủ),
+từ ngắn hơn mức dưới đây ép bao nhiêu cũng được, luôn hiện đủ; dài hơn thì ép tối đa tới 0,6, vẫn không vừa thì cắt ở
+giữa giữ đầu và cuối ("ng…ng"). Mức (người dùng đặt 2026-11-23): Cỡ chữ 100% là 24 ký tự (cả Quốc ngữ lẫn tiếng Anh),
+200% là 6 (Quốc ngữ) / 8 (tiếng Anh), giữa hai mốc nội suy theo đường thẳng (150%: 15 / 16; 85%: 27). Ô rộng 335 px (95,7 dp) ở mọi cỡ chữ; lề chữ 8 dp phía vạch ngăn, ô sát nút ⊞ lề trái 18 dp,
+ô sát nút góc lề phải 19 dp (đo Gboard 2026-11-23). Từ vừa ô thì không bao giờ có "…".
 - Nút mũi tên ở cuối dải mở **bảng mở rộng** dạng lưới, chiếm chỗ bàn phím, cuộn dọc; chỉ hiện các
 gợi ý chưa có trên thanh.
 - **Cột chọn nhanh** (bên trái bảng mở rộng) thu hẹp âm tiết đầu từng cấp: phụ âm đầu → nguyên âm → vần →
-phụ âm cuối → thanh. Đầu cột có sẵn mục đúng âm đã gõ (gõ `tôi` thì có `tôi`). Vần luôn được hỏi; vần không thể
+phụ âm cuối → thanh. Đầu cột có sẵn mục đúng âm đã gõ (gõ `tôi` thì có `tôi`); đã chốt âm thì âm kế tiếp cũng có
+mục này, không vào thẳng phụ âm đầu (gõ `an chi chi`, chốt an → cột có `chi`; người dùng muốn 2026-11-23). Đã chốt
+âm mà chưa chọn gì ở âm kế tiếp thì đầu cột không có mục "‹" (trước ghi "‹ chi"); bỏ chốt bằng phím xoá. Gõ liền
+nhiều âm không dấu cách (kể cả chữ tiếng Anh): cột trái hỏi lần lượt từng đoạn âm của lõi (người dùng muốn 2026-11-23):
+phụ âm ngay trước nguyên âm thuộc âm sau; phụ âm thừa (cuối chuỗi, hay thừa trước phụ âm đầu của âm sau) làm phụ âm cuối
+của âm trước nếu ghép thành âm; phím dấu Telex chỉ gắn vào âm khi âm đó trùng đúng một chữ khung gõ hiện; phím dấu gõ đôi
+để huỷ (`xx`) là một đoạn. `internet` → in · te · r · net, `ex` → ẽ, `exx` → e · x, `exchangings` → ẽ · cha · ngi · n · g
+· s, `anchichi` → an · chi · chi, `chunom` → chu · nom. Chữ thô (đã huỷ dấu; lõi đặt ký tự U+E000 ở đầu) chia theo chữ
+cái, ký tự thô không thuộc đoạn nào và không bao giờ hiện ra. Vần kết thúc bằng i / y không đi với ng, c (tiếng Việt viết
+inh, ich): `ings` không còn thành "íng".
+Mục chọn nhanh chỉ hiện khi âm đó ra chữ Hán Nôm thật (không tính lựa chọn giữ chữ Latin). Vần luôn được hỏi; vần không thể
 có phụ âm cuối (vần đôi ôi, ai, âu…) thì khỏi hỏi phụ âm cuối (t → ô → ôi → thanh). Các thanh luôn xếp theo thứ tự cố định: ngang, huyền, sắc,
 hỏi, ngã, nặng (ma, mà, má, mả, mã, mạ). Đã chọn một âm (kể cả mục chọn nhanh) thì cột vẫn hiện các thanh
 khác của chính âm đó để đổi.
+- **Chốt âm bằng phím cách mà chưa chọn gì ở cột trái** (người dùng quyết định 2026-11-22, thay luật 2026-11-17
+"`tooi` chỉ là tôi"): phần đã gõ giữ đúng, phần chưa gõ để mở. Chữ cái gõ không dấu phụ nhận mọi dấu phụ (`cong`:
+cong, công, cơng; d không thành đ); chưa gõ thanh thì nhận mọi thanh (`coong`: công, cống, cồng, cổng, cộng); đã gõ
+thanh thì đúng thanh đó (`coongs`: cống). Âm chưa có phụ âm cuối nhận thêm phụ âm cuối (`too`: tô, tôn, tố…). Chỉ gõ
+phụ âm (`c`) thì nhận mọi âm bắt đầu bằng chữ đó, gồm cả ch. Muốn đúng một âm (cả thanh ngang) thì chọn ở cột trái.
+Từ điển hiện có: `cong` 55 chữ, `nhan` 93 chữ (khoảng 2–3 trang lưới).
 - **Nhóm phụ âm đầu** (do người dùng đặt): có một phụ âm trong nhóm xuất hiện ở cột chọn nhanh thì hiện cả
 các phụ âm cùng nhóm, nhưng tự ẩn phụ âm nào ghép vào không ra chữ nào cho gọn (gõ `cũng`: có gũng nên hiện g,
 không có kũng nên ẩn k; chỉ gõ phụ âm đầu thì ẩn phụ âm không có âm nào trong từ điển); phụ âm đã gõ đứng đầu.
@@ -201,6 +473,35 @@ Bố cục → Chiều cao bàn phím, Khoảng trống dưới bàn phím.
 bằng nút Kích thước trên bàn phím. Bàn phím một tay nhớ riêng cỡ (chiều cao, khoảng trống dưới đáy, bề rộng) và vị
 trí đã kéo; bấm phóng to thì bàn phím đầy đủ trở lại đúng cỡ và vị trí của nó.
 
+Giới hạn kéo của Kích thước ở **màn hình ngang**, đo Gboard trên điện thoại 2026-11-22 (có hàng số, màn cao 1240 px
+= 354 dp): đỉnh khung không lên quá 762 px tính từ đáy (61,5% màn hình), khung cao hay thấp cũng vậy; cỡ mặc định
+(khung 762 px ≈ 218 dp) đã chạm trần nên không kéo cao hơn mặc định. Thấp nhất khung 573 px ≈ 164 dp: thanh trên giữ
+nguyên, hàng phím còn 0,687 mặc định (bàn phím mình: 24 dp, đã đúng). Khoảng trống dưới đáy lớn nhất = trần trừ
+khung (khung thấp nhất: 190 px ≈ 54 dp). Bàn phím mình trước cho đỉnh khung lên tới 83,5% màn hình, giờ 61,5%.
+Chưa đo khi tắt hàng số.
+Chiều cao từng hàng phím (px, phím / bước; khe 12 px không đổi), đo cùng ngày: mặc định hàng số 93 / 105, hàng chữ
+113 / 125, phím cách 108 / 120; thấp nhất 57 / 69, 75 / 87, 69 / 81. Gboard không co các hàng cùng tỉ lệ, nên hàng số
+và hàng phím cách tính theo đường thẳng qua hai cỡ này; hàng chữ mặc định 36 dp, thấp nhất 25 dp. Đo lại bàn phím mình
+cỡ mặc định: 93 / 113 / 108, đỉnh bàn phím trùng Gboard (trước: 91 / 110 / 104, đỉnh thấp hơn 18 px). Kéo ✥ chạm giới
+hạn dọc thì đỏ cả cạnh trên lẫn cạnh dưới.
+
+**Màn hình dọc**, đo Gboard 2026-11-22 (px, phím; khe các hàng chữ 28 px): thấp nhất hàng số 79, hàng chữ 83 (bước
+111 = 31,7 dp), phím cách 93; mặc định 126 / 133 (bước 161) / 144; cao nhất 220 / 233 (bước 261 = 74,6 dp) / 246. Khe
+dưới hàng số 24 px (mình trước 28). Phím cách (cả khe) = 1,02 × hàng chữ + 7,8 px (trước 1,068 × hàng chữ). Trang
+?123 và =\< giống nhau: khe giữa các hàng cố định ~58 px (phím / bước: 87 / 145 thấp nhất, 151 / 211 mặc định, 285 /
+342 cao nhất); trước là phím = bước / 1,4. Hàng chữ thấp / cao nhất 32 / 75 dp (trước 36 / 72). Màn hình ngang: trang
+?123 ở các giới hạn chưa đo (vẫn phím = bước / 1,3).
+
+**Bàn phím một tay** (dọc), đo Gboard 2026-11-22 bằng cách kéo khung Kích thước (px, phím / khe; hàng số, hàng chữ, ?123):
+thấp nhất (khối 220 dp) 99 / 18, 104 / 21,5, 121 / 44, phím cách 112; mặc định (khối 258 dp) 117 / 21, 124 / 24,5,
+145 / 50, phím cách 134; trung gian (khung 319 dp) 155 / 21, 165 / 24, 194 / 50; cao nhất (khối 355 dp) 182 / 21,
+193 / 24,5, 234 / 51, phím cách 204. Hệ số các hàng như bàn phím đầy đủ (hàng số 0,932, phím cách 1,02 × + 2,23 dp);
+bước hàng chữ mặc định ~148,75 px = 42,5 dp (đầy đủ 46 dp). Kéo thấp hơn mặc định thì khe hàng, lề trên (7 → 21 px tới
+phím đầu) và lề dưới (13 → 16 px) co theo; cao hơn thì chỉ phím cao thêm. Khe ?123 ≈ 2,04 khe hàng chữ. Ngang: khe
+12–13 px ở mọi bề rộng, phím = khung / 10 − 13 (87%: 94, 75%: 81). Thanh trên 42 dp (từ đỉnh khối tới phím đầu 168 px).
+Khung mặc định cách mép 4 dp, kéo ✥ thì sát mép được. Kéo góc = kéo hai cạnh, mỗi chiều chạm giới hạn riêng. Bàn phím
+mình đo lại cùng ngày: khớp Gboard tới 1–2 px ở mặc định, thấp nhất, cao nhất và trang ?123.
+
 **Ngôn ngữ ứng dụng** (đầu trang Ngôn ngữ, 2026-11-18): Mặc định của hệ thống (máy tiếng Việt → Tiếng Việt, khác →
 English) / Tiếng Việt / Tiếng Việt (Hán Nôm) / English. Từ điển cũng gọi ngôn ngữ này là Tiếng Việt (Hán Nôm). Chữ giao diện qua `Context.tr(vi, en, nom)` (`AppText.kt`); danh sách chữ và
 các chữ còn thiếu bản Hán Nôm (cột English / Tiếng Việt / Hán Nôm) cho người dùng điền ở `app-labels.md`, chuỗi chưa có chữ Hán Nôm thì hiện tiếng Việt.
@@ -216,7 +517,7 @@ Từ điển: tạo mới / đổi tên mà trùng tên từ điển khác (khô
 | Number row for passwords                        | Hàng số cho mật khẩu                                                  | 行數賙密口                | **mới**: chỉ bật được khi tắt Hàng số; ô mật khẩu vẫn có hàng số                                                                                                                        |
 | *Theme*                                         | *Giao diện*                                                           | 交面                   | **mới**                                                                                                                                                                                 |
 | Font, Nomna default                             | Phông chữ (mặc định của bàn phím / của hệ thống)                      | 風𡨸默定𧵑系統, 風𡨸默定𧵑盤柉 | **mới**: đổi phông chữ Latin trên phím và thanh gợi ý (Roboto ↔ phông hệ thống); chữ Hán Nôm giữ phông Hán Nôm                                                                          |
-| Font size, Same as device                       | Cỡ chữ (85%, giống như thiết bị, 115–200%)                            | 𢤫𡨸, 𠏳如設備          | **mới**: chữ trên phím; chưa áp cho thanh gợi ý, icon trên phím không đổi                                                                                                               |
+| Font size, Same as device                       | Cỡ chữ (85%, giống như thiết bị, 115–200%)                            | 𢤫𡨸, 𠏳如設備          | **mới**: chữ trên phím; chưa áp cho thanh gợi ý. Icon thanh công cụ to như Gboard (×1,07 / 1,14 / 1,24 / 1,44 / 1,53 ở 115–200%; nút ⊞ ít hơn, tới ×1,21; vòng nền bánh răng giữ nguyên). Icon shift / xoá / enter to theo số đo Gboard (giữ cỡ tới 150%, ở 200% shift ×1,33, xoá / enter ×1,2); nhãn rộng hơn phím thì thu cho vừa. `12/34` và `=\<` to kiểu icon (tới 150% giữ nguyên, 180% ×1,15, 200% ×1,25); `12/34` cỡ 13,7 sp ở 100%, chữ số giãn như Gboard; `=\<` thu nhỏ cho bằng Gboard (0,42 → 0,34 hàng). Chữ gợi ý Hán Nôm to theo bảng phóng chữ (Gboard 200%: ×1,63; "Giống như thiết bị" để sp tự theo hệ thống); gợi ý từ Quốc ngữ / tiếng Anh chưa đổi. Bảng thả: chữ lưới, cột trái, nút 單 theo bảng phóng chữ, ít ô hơn khi chữ to (200%: ~4 ô); mũi tên ▲▼ ×1,75, nút xoá ×1,2; cỡ gốc như Gboard (chữ lưới 22 → 19 sp, 單 18 → 20,5 sp, mũi tên ×1,17, xoá ×1,12). Phóng phi tuyến như Gboard (bảng phóng chữ của Android 14, `FontScale.kt`; đo Gboard 2026-11-22: chữ phím 24 sp ở nấc 200% lên 36 sp, `?123` 16 → 28 sp; 85% phóng thẳng) |
 | Use device font size                            | Sử dụng cỡ chữ của thiết bị                                           | 使用𢤫𡨸𧵑設備           | **mới**                                                                                                                                                                                 |
 | Emoji size                                      | Kích thước biểu tượng cảm xúc (7 nấc, 9 → 5 emoji một hàng)           | 戟𡱩表象感觸              | **mới**: số cột bảng emoji màn hình dọc. Nấc 8+ / 7+ giữ số cột, emoji to hơn 6% / 9,5% (đo Gboard 2026-11-18). Thiếu: màn hình ngang chưa đổi                                                             |
 | Set the size and number of emoji shown in a row | Đặt kích thước và số lượng biểu tượng cảm xúc hiển thị trong một hàng | 撻戟𡱩吧數量表象感觸顯示𥪝𠬠行   | **mới**                                                                                                                                                                                 |
@@ -578,13 +879,24 @@ trên bàn phím, không nháy khi bàn phím đang mở; trang danh sách ngôn
   đứng trước 中國); chỉ câu tự ghép giữ ô 1, chữ Latin vẫn ở ô 2. Lõi gửi kèm độ phổ biến của từng gợi ý (JNI thêm một
   trường). Đã chọn cả âm ở cột trái (`trung`): lưới có thêm mọi từ chứa âm đó ở bất kỳ vị trí nào (忠厚, 集中, 人中…), xếp
   chung với chữ đơn theo độ phổ biến; chạm từ thì cả từ thay cho âm đó. Chưa chọn âm thì vẫn có mọi thanh.
+  Chọn âm ở cột trái (kể cả mục chọn nhanh "tôi" ở đầu cột) là đã chọn thanh; chốt âm bằng phím cách thì chưa (mọi
+  thanh). Đã chọn tới âm có thanh thì thanh gợi ý phía trên là các chữ đầu của đúng âm đó theo độ phổ biến, lưới nối
+  tiếp phần còn lại, không lặp (như 𡨸單); không còn chữ khác thanh (gõ tôi, chọn tôi: trước thanh còn 最 tối, 罪 tội;
+  người dùng muốn 2026-11-22). Chọn dở (chưa tới thanh) thì thanh vẫn bỏ các chữ lưới đang giữ như cũ. Đã chốt âm
+  thì lưới cũng theo độ phổ biến (cụm lẫn chữ đơn), không còn cụm dài trước (cùng ngày); các giới hạn cũ của lưới (mỗi
+  độ dài vài cụm, không cụm tự ghép, không quá dài) giữ nguyên. Âm đầu chốt với cả âm chọn ở cột trái (tôi) vẫn có các
+  từ chứa âm đó ở bất kỳ chỗ nào (眾𫇈 chúng tôi), kể cả khi gõ tiếp âm sau; chạm thì thay đúng phần phím của âm đó.
+  Âm nào chưa chốt được thanh thì nhãn có đuôi "…":
+  chốt bằng phím cách mà chưa chọn thanh ở cột trái (gõ `tooi`) hiện "tôi…"; gõ có thanh (`toois` → "tối") hay chọn
+  âm ở cột trái thì không (cùng ngày).
 - Thanh kéo Cỡ chữ / Kích thước emoji: bong bóng giá trị hiện thật (vẽ trên lớp phủ cửa sổ, trước đó không hiện), cỡ như
   Gboard (tròn 32 dp, viên "100%" ≈ 59 dp, nút kéo ngắn lại 38 dp khi giữ); vùng emoji cao cố định 64 dp, đổi nấc không
   làm trang co giãn.
 - Giao diện tối mặc định theo Material 3 của Gboard: nền #1E1F20, phím chữ #37393B, phím chức năng #444746, chữ #E3E3E3,
   màu nhấn #A8C7FA (chữ trên phím nhấn #062E6F).
-- Bàn phím một tay (dọc): bề ngang 75–87% màn hình, khung cao 224–358 dp, đỉnh khung không quá 358 dp từ đáy (đo khung
-  chỉnh kích thước của Gboard); kéo khung lên trên bàn phím thì phủ đen 80% như Gboard.
+- Bàn phím một tay (dọc): bề ngang 75–86,7% màn hình, khối cao 220,3–354,9 dp, đỉnh khối không quá 354,9 dp từ đáy
+  (trước 224–358 dp, đo theo khung của Gboard vốn thò xuống dưới khối ~13 px); kéo khung lên trên bàn phím thì phủ đen
+  80% như Gboard. Cỡ phím một tay theo Gboard (đoạn "Bàn phím một tay" ở trên); cỡ một tay lưu số lẻ (dp).
 - Màn hình ngang: khung chỉnh kích thước lùi khỏi tai thỏ như các phím.
 - Khung kính: mốc 12 lần xoá, chuỗi dài không dấu cách hiện 13 ký tự (mục ở trên); dòng phụ trang từ điển không tách
   "A → Z" sang hai dòng.

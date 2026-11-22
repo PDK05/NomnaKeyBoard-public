@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="120" viewBox="0 0 1120 240" font-family="Arial, Roboto, sans-serif">
+<rect width="1120" height="240" fill="#DACDC5"/>
+<text x="20" y="56" font-size="26" fill="#1E1E1E" font-weight="bold">Hiện tại</text>
+<text x="20" y="88" font-size="20" fill="#1E1E1E">trỏ #FF7276 · cách #E86E6A</text>
+<text x="20" y="116" font-size="20" fill="#1E1E1E">nhấn + đỏ · trỏ/cách 1,15</text>
+<rect x="340" y="28" width="370" height="80" rx="16" fill="#F0EBE7"/>
+<text x="360" y="82" font-size="36" fill="#1E1E1E">ba mươi</text>
+<rect x="502.0" y="42" width="10.0" height="52" fill="#E86E6A"/>
+<rect x="498.0" y="44" width="4" height="48" fill="#FF7276"/>
+<rect x="730" y="28" width="370" height="80" rx="16" fill="#F0EBE7"/>
+<text x="750" y="82" font-size="36" fill="#1E1E1E">ba mươi mốt</text>
+<rect x="889.0" y="44" width="4" height="48" fill="#FF7276"/>
+<text x="20" y="168" font-size="26" fill="#1E1E1E" font-weight="bold">Đã chọn D</text>
+<text x="20" y="200" font-size="20" fill="#1E1E1E">trỏ #660003 · cách #E86E6A</text>
+<text x="20" y="228" font-size="20" fill="#1E1E1E">đỏ đậm + đỏ · trỏ/cách 4,39</text>
+<rect x="340" y="140" width="370" height="80" rx="16" fill="#F0EBE7"/>
+<text x="360" y="194" font-size="36" fill="#1E1E1E">ba mươi</text>
+<rect x="502.0" y="154" width="10.0" height="52" fill="#E86E6A"/>
+<rect x="498.0" y="156" width="4" height="48" fill="#660003"/>
+<rect x="730" y="140" width="370" height="80" rx="16" fill="#F0EBE7"/>
+<text x="750" y="194" font-size="36" fill="#1E1E1E">ba mươi mốt</text>
+<rect x="889.0" y="156" width="4" height="48" fill="#660003"/>
+</svg>

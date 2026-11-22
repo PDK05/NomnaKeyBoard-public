@@ -43,8 +43,25 @@ class KeyboardTheme(
      * (`color_state_label_candidate_selected`), không tô màu nhấn (người dùng muốn 2026-11-18).
      */
     val candidate: Int = accent,
+    /** Con trỏ khung gõ (mặc định màu nhấn; vài giao diện "Màu" đổi cho rõ trên dấu cách cuối, xem [ThemeSpec]). */
+    val caret: Int = accent,
+    /** Nền dấu cách cuối của khung gõ (ngay sau con trỏ): mặc định đỏ đục 70%. */
+    val trailingSpace: Int = TRAILING_SPACE,
+    /** Bảng "Thay đổi bàn phím" ([KeyboardDialog]): ✓, chữ dòng đang chọn và nút hành động. */
+    val dialogAccent: Int = accent,
+    /** Nền viên của dòng đang chọn trong bảng đó (mặc định màu nhấn đục 19%). */
+    val dialogRow: Int = accent and 0x00FFFFFF or 0x30000000,
 ) {
+    /**
+     * Icon thanh công cụ và bảng tiện ích (⊞, các nút ghim, nút góc, icon trong ô): màu chữ phủ 60% như Gboard (đo trên
+     * điện thoại 2026-11-22, giao diện Google xanh tối: icon (169,171,173) trên nền #292E33, (182,183,185) trên ô
+     * #484C4F; chữ trong ô vẫn trắng hẳn).
+     */
+    val toolIcon: Int get() = (text and 0xFFFFFF) or ((Color.alpha(text) * 0.6f).toInt() shl 24)
+
     companion object {
+        const val TRAILING_SPACE = 0xB3E53935.toInt()
+
         fun of(context: Context): KeyboardTheme {
             val settings = Settings(context)
             return ThemeSpec.find(settings.themeId).resolve(context).build(settings.keyBorders)
@@ -89,7 +106,8 @@ class KeyboardTheme(
     /** Bản không viền phím (hoặc giữ nguyên nếu [borders]). */
     fun withBorders(borders: Boolean): KeyboardTheme = if (borders) this else KeyboardTheme(
         background, key, specialKey, pressedKey, text, hintText, accent, onAccent, bubble, popup, composeBox,
-        header = header, borderless = true, spaceBar = spaceBar, candidate = candidate,
+        header = header, borderless = true, spaceBar = spaceBar, candidate = candidate, caret = caret,
+        trailingSpace = trailingSpace, dialogAccent = dialogAccent, dialogRow = dialogRow,
     )
 }
 
@@ -146,6 +164,10 @@ class ThemeSpec(
             borderless = !borders,
             spaceBar = spaceBar,
             candidate = label,
+            caret = CARET[id] ?: (if (borders) borderAccent else accent),
+            trailingSpace = TRAILING[id] ?: KeyboardTheme.TRAILING_SPACE,
+            dialogAccent = DIALOG[id]?.first ?: (if (borders) borderAccent else accent),
+            dialogRow = DIALOG[id]?.second ?: ((if (borders) borderAccent else accent) and 0x00FFFFFF or 0x30000000),
         )
     }
 
@@ -202,6 +224,65 @@ class ThemeSpec(
             color("holo_white", "#161616", "#272727", "#282828", "#5C5C5C", "#BCBCBC", "#282828"),
         )
 
+        /**
+         * Con trỏ khung gõ và nền dấu cách cuối (ngay sau con trỏ) riêng của vài giao diện "Màu": màu nhấn trùng nền đỏ
+         * mặc định nên khó thấy con trỏ. Người dùng chọn 2026-11-23 (PRD-mobile.md F1, hình ở docs/caret-colors/):
+         * Đỏ: trỏ trắng, cách đỏ sẫm; Hồng: trỏ hồng rất nhạt, cách mận sẫm; Hồng nhạt: giữ trỏ, cách xám đậm; Cát, Nâu:
+         * chỉ đổi trỏ. Đợt 2: Xanh lá: trỏ lục rất đậm, cách trắng 60%; Xanh mòng két, Xanh dương, Tím đậm, Xanh xám: trỏ
+         * trắng, cách sẫm cùng sắc nền.
+         */
+        private val CARET = mapOf(
+            "color_red" to c("#FFFFFF"),
+            "color_green" to c("#143816"),
+            "color_teal" to c("#FFFFFF"),
+            "color_blue" to c("#FFFFFF"),
+            "color_deep_purple" to c("#FFFFFF"),
+            "color_blue_grey" to c("#FFFFFF"),
+            // Đợt 3: Holo xanh: trỏ xanh rất nhạt, cách xanh Holo sẫm; Holo trắng: trỏ trắng, cách xám sẫm.
+            "color_holo_blue" to c("#B3E5FC"),
+            "color_holo_white" to c("#FFFFFF"),
+            "color_pink" to c("#FFDBE8"),
+            "color_sand" to c("#660003"),
+            "color_brown" to c("#EAE3E1"),
+        )
+        private val TRAILING = mapOf(
+            "color_red" to 0xD95D0F0F.toInt(),
+            "color_pink" to 0xCC4A0E2E.toInt(),
+            "color_light_pink" to 0xB3212121.toInt(),
+            "color_green" to 0x99FFFFFF.toInt(),
+            "color_teal" to 0xD9004C43.toInt(),
+            "color_blue" to 0xD9082445.toInt(),
+            "color_deep_purple" to 0xD91B0F3E.toInt(),
+            "color_blue_grey" to 0xD91F292D.toInt(),
+            "color_holo_blue" to 0xD9003D5C.toInt(),
+            "color_holo_white" to 0xB3212121.toInt(),
+        )
+
+        /**
+         * Bảng "Thay đổi bàn phím": màu chữ / ✓ / nút và nền viên dòng đang chọn, cho các giao diện "Màu" có màu nhấn
+         * chìm vào thẻ (người dùng chọn 2026-11-23, PRD-mobile.md F1, ảnh ở docs/keyboard-dialog/). `null` ở nền viên là
+         * giữ màu nhấn đục 19%; [DARK_ROW] là đen đục 22% phủ lên thẻ.
+         */
+        private const val DARK_ROW = 0x38000000
+        private val DIALOG: Map<String, Pair<Int, Int?>> = mapOf(
+            "color_material_light" to (c("#397E77") to null),
+            "color_material_dark" to (c("#91C0BD") to DARK_ROW),
+            "color_google_blue_dark" to (c("#9ABDF9") to DARK_ROW),
+            "color_red" to (Color.WHITE to DARK_ROW),
+            "color_green" to (Color.WHITE to DARK_ROW),
+            "color_teal" to (Color.WHITE to DARK_ROW),
+            "color_blue" to (Color.WHITE to DARK_ROW),
+            "color_cyan" to (c("#006D7A") to 0x30006D7A),
+            "color_deep_purple" to (c("#DFD6F0") to DARK_ROW),
+            "color_pink" to (c("#FFEBF2") to DARK_ROW),
+            "color_light_pink" to (c("#B6204D") to null),
+            "color_sand" to (c("#D60006") to null),
+            "color_brown" to (c("#DDD3CF") to DARK_ROW),
+            "color_blue_grey" to (c("#E2E7E9") to DARK_ROW),
+            "color_holo_blue" to (c("#99DDFF") to DARK_ROW),
+            "color_holo_white" to (c("#D4D4D4") to null),
+        )
+
         /** Giao diện thuộc mục "Màu" (chỉ những giao diện này vào "Giao diện của tôi"). */
         fun isColor(id: String) = COLORS.any { it.id == id }
 
@@ -251,6 +332,9 @@ fun android.graphics.Paint.centerXFor(text: String, cx: Float): Float {
     return cx + measureText(text) / 2 - (ink.left + ink.right) / 2f
 }
 
+/** Bút phông hệ thống, để hỏi phông hệ thống có chữ nào ([applyHanNomFont]). */
+private val SYSTEM_PAINT = android.graphics.Paint()
+
 /** Đổi phông cho một đoạn chữ. */
 private class FontSpan(private val typeface: Typeface) : MetricAffectingSpan() {
     override fun updateMeasureState(paint: TextPaint) {
@@ -266,17 +350,20 @@ private class FontSpan(private val typeface: Typeface) : MetricAffectingSpan() {
  * Gắn phông Hán Nôm cho các chữ ngoài BMP (CJK mở rộng B trở đi), chữ còn lại giữ phông của ô chữ (Roboto).
  * Không đặt cả ô chữ sang phông Hán Nôm vì MiSans L3 có dấu cách rộng kiểu chữ Hán.
  */
-fun applyHanNomFont(text: Spannable, typeface: Typeface) {
+fun applyHanNomFont(text: Spannable, typeface: Typeface, onlyMissing: Boolean = false) {
     text.getSpans(0, text.length, FontSpan::class.java).forEach(text::removeSpan)
+    // Chọn phông hệ thống ([onlyMissing]): chỉ chữ mà phông hệ thống không có mới lấy phông đi kèm, không thì ô vuông
+    // (vd. 𱜢 vùng mở rộng H; người dùng muốn 2026-11-23).
+    fun wanted(cp: Int) = cp >= 0x20000 && (!onlyMissing || !SYSTEM_PAINT.hasGlyph(String(Character.toChars(cp))))
     var i = 0
     while (i < text.length) {
         val cp = Character.codePointAt(text, i)
-        if (cp < 0x20000) {
+        if (!wanted(cp)) {
             i += Character.charCount(cp)
             continue
         }
         var end = i
-        while (end < text.length && Character.codePointAt(text, end) >= 0x20000) {
+        while (end < text.length && wanted(Character.codePointAt(text, end))) {
             end += Character.charCount(Character.codePointAt(text, end))
         }
         text.setSpan(FontSpan(typeface), i, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -286,8 +373,11 @@ fun applyHanNomFont(text: Spannable, typeface: Typeface) {
 
 /** Bản có gắn phông Hán Nôm của [text], để đặt vào TextView. */
 fun Context.hanNomText(text: CharSequence): CharSequence {
-    val typeface = hanNomTypeface() ?: return text
-    return SpannableString(text).also { applyHanNomFont(it, typeface) }
+    hanNomTypeface()?.let { t -> return SpannableString(text).also { applyHanNomFont(it, t) } }
+    // Phông hệ thống: vẫn gắn phông đi kèm cho chữ hệ thống không có.
+    if (text.none { Character.isSurrogate(it) }) return text
+    val bundled = FontCache.bundled(this) ?: return text
+    return SpannableString(text).also { applyHanNomFont(it, bundled, onlyMissing = true) }
 }
 
 /**
@@ -297,6 +387,13 @@ fun Context.hanNomText(text: CharSequence): CharSequence {
 class EllipsisTextView(context: Context) : TextView(context) {
     /** Chữ đầy đủ (trước khi cắt). */
     private var source: CharSequence = ""
+    /** Cắt ở giữa, giữ đầu và cuối ("ng…ng", như thanh gợi ý từ của Gboard); không thì cắt ở cuối. */
+    var middle = false
+        set(v) {
+            if (field == v) return
+            field = v
+            requestLayout()
+        }
     /** Đang đặt chữ đã cắt (không phải chữ mới từ bên ngoài). */
     private var fitting = false
 
@@ -310,11 +407,18 @@ class EllipsisTextView(context: Context) : TextView(context) {
         val full = source
         val avail = (measuredWidth - totalPaddingLeft - totalPaddingRight).toFloat()
         // Chỉ cắt chữ một dòng (nhiều dòng thì để TextView xuống dòng như thường).
-        val fits = maxLines != 1 || avail <= 0f || android.text.Layout.getDesiredWidth(full, paint) <= avail
+        val fits = maxLines != 1 || avail <= 0f || android.text.Layout.getDesiredWidth(full, paint) <= avail + 1f
         val shown: CharSequence = if (fits) full else {
-            fun cut(n: Int): CharSequence = android.text.SpannableStringBuilder(full, 0, n).append(
-                SpannableString(ELLIPSIS).apply { setSpan(FontSpan(Typeface.DEFAULT), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) },
-            )
+            fun dots() = SpannableString(ELLIPSIS).apply { setSpan(FontSpan(Typeface.DEFAULT), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
+            // Giữ [n] ký tự: cắt cuối thì n ký tự đầu; cắt giữa thì nửa đầu (nhiều hơn khi lẻ) và nửa cuối.
+            fun cut(n: Int): CharSequence {
+                if (!middle) return android.text.SpannableStringBuilder(full, 0, n).append(dots())
+                var head = (n + 1) / 2
+                var tail = full.length - (n - head)
+                if (head in 1 until full.length && Character.isLowSurrogate(full[head])) head--
+                if (tail in 1 until full.length && Character.isLowSurrogate(full[tail])) tail++
+                return android.text.SpannableStringBuilder(full, 0, head).append(dots()).append(full, tail, full.length)
+            }
             // Phần đầu dài nhất còn vừa (không cắt giữa cặp surrogate).
             var lo = 0
             var hi = full.length
@@ -341,11 +445,13 @@ class EllipsisTextView(context: Context) : TextView(context) {
 
 /** Cho ô nhập: gắn lại phông Hán Nôm mỗi khi chữ thay đổi. */
 fun TextView.useHanNomFont() {
-    val typeface = context.hanNomTypeface() ?: return
+    val own = context.hanNomTypeface()
+    // Phông hệ thống: chỉ chữ hệ thống không có mới lấy phông đi kèm ([applyHanNomFont]).
+    val typeface = own ?: FontCache.bundled(context) ?: return
     addTextChangedListener(object : TextWatcher {
         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-        override fun afterTextChanged(s: Editable) = applyHanNomFont(s, typeface)
+        override fun afterTextChanged(s: Editable) = applyHanNomFont(s, typeface, onlyMissing = own == null)
     })
 }
 
@@ -359,8 +465,10 @@ private object FontCache {
     private var loaded = false
     private var typeface: Typeface? = null
 
-    fun get(context: Context): Typeface? {
-        if (Settings.systemFont(context)) return null
+    fun get(context: Context): Typeface? = if (Settings.systemFont(context)) null else bundled(context)
+
+    /** Phông đi kèm, không xét "Phông chữ" (chọn phông hệ thống thì vẫn dùng cho chữ hệ thống không có). */
+    fun bundled(context: Context): Typeface? {
         if (!loaded) {
             loaded = true
             File(context.filesDir, OLD_CUSTOM).delete()

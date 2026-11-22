@@ -290,7 +290,8 @@ object Layouts {
         "(" to oneRow(3, "【", "［", "{", "(", "<"),
         ")" to oneRow(4, "】", "］", "}", ">", ")"),
         "/" to single("／"),
-        "“" to oneRow(0, "＂", "《"),
+        // Người dùng muốn dấu nháy kép ASCII thay cho ＂ toàn khổ của Gboard (2026-11-22).
+        "“" to oneRow(0, "\"", "《"),
         "”" to oneRow(0, "„", "》"),
         ":" to single(":"),
         ";" to single(";"),

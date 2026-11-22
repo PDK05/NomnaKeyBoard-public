@@ -126,6 +126,14 @@ pub fn check(l: &[char], tone: Tone, mode: Check) -> bool {
         return false;
     }
 
+    // Vần kết thúc bằng i / y không đi với ng, c: tiếng Việt viết inh, ich (kính, ích), không có ing, ic (người dùng
+    // báo `ings` thành íng, 2026-11-23).
+    // Đang gõ dở thì `ic` còn có thể thành ich (dịch), chỉ `ing` là hết đường.
+    let bad = fin == "ng" || (fin == "c" && mode != Check::Prefix);
+    if bad && matches!(nucleus[nucleus.len() - 1], 'i' | 'y') {
+        return false;
+    }
+
     if fin == "ch" || fin == "nh" {
         let last = nucleus[nucleus.len() - 1];
         let ok = if mode == Check::Strict {

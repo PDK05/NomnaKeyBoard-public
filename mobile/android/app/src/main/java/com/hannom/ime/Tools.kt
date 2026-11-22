@@ -50,6 +50,19 @@ enum class ToolId(val label: String, val icon: Int) {
         return style.say(vi, nom, en)
     }
 
+    /**
+     * Nhãn ẩn cho TalkBack (biểu tượng không kèm chữ): bàn phím Hán Nôm đọc tiếng Việt, không cần chữ Nôm (người
+     * dùng 2026-11-22).
+     */
+    fun spokenLabel(style: KeyboardStyle): String {
+        val vi = when (this) {
+            EMOJI -> "Biểu tượng cảm xúc"
+            RESIZE -> "Đổi kích thước"
+            else -> label
+        }
+        return style.say(vi, vi, label(KeyboardStyle.ENGLISH))
+    }
+
     companion object {
         /** Tên Hán Nôm của tiện ích; tiện ích chưa có tên Hán Nôm thì dùng tên tiếng Anh. */
         private val HAN_NOM_LABELS = mapOf(
@@ -137,6 +150,20 @@ class ToolsPanel(
             field = v
             tiles.clear()
             title.text = titleText()
+        }
+    /** "Cỡ chữ" (1 là 100%): icon trong ô to theo [FontScale.TILE_ICON]. Đổi thì dựng lại ô. */
+    var labelScale = 1f
+        set(v) {
+            if (field == v) return
+            field = v
+            tiles.clear()
+        }
+    /** Hệ số phóng chữ trong ô (1 khi "Giống như thiết bị", vì sp đã theo hệ thống), như [CandidateBar.textScale]. */
+    var textScale = 1f
+        set(v) {
+            if (field == v) return
+            field = v
+            tiles.clear()
         }
 
     private fun titleText() = context.hanNomText(style.say("Giữ và kéo để tuỳ chỉnh", "𡨺吧𢫃抵隨整", "Hold and drag to customize"))
@@ -233,21 +260,48 @@ class ToolsPanel(
         if (editing) {
             for (id in layout.grid) editGrid.addView(tile(id, hidden))
         } else {
-            val rows = rowsPerPage()
-            for (page in layout.grid.chunked(rows * TileGrid.columnsFor(context))) {
-                pager.addPage(TileGrid(context, minRows = rows).apply { page.forEach { addView(tile(it, hidden)) } })
+            val fit = pageFit(layout.grid.size)
+            if (footer.layoutParams.height != fit.footer) footer.layoutParams = footer.layoutParams.apply { height = fit.footer }
+            for (page in layout.grid.chunked(fit.rows * TileGrid.columnsFor(context))) {
+                pager.addPage(TileGrid(context, minRows = fit.rows, tileHeight = fit.tileHeight, padTop = fit.padTop, padBottom = fit.padBottom).apply {
+                    page.forEach { addView(tile(it, hidden)) }
+                })
             }
             updateDots()
         }
     }
 
-    /** Số hàng một trang: tối đa [MAX_ROWS], ít hơn khi bảng thấp (màn hình ngang) để ô không bị cắt. */
-    private fun rowsPerPage(): Int {
+    /** Cách xếp một trang lưới: số hàng, chiều cao ô, lề trên / dưới lưới và chiều cao dải chấm trang / nút ✎ (px). */
+    private class PageFit(val rows: Int, val tileHeight: Int, val padTop: Int, val padBottom: Int, val footer: Int)
+
+    /**
+     * Số hàng một trang, như Gboard (đo 2026-11-22, màn hình dọc): lưới có lề trên 18 dp, không có lề dưới, dải chấm
+     * trang / nút ✎ ở đáy bảng. Số hàng là số hàng ô cỡ thường xếp được, làm tròn (không phải làm tròn xuống); thiếu
+     * chút chỗ thì ô và lề trên thu lại cùng tỉ lệ cho vừa. Gboard cỡ cao nhất: 6 hàng (12 tiện ích, 9 tiện ích thì
+     * thấy 5 hàng), ô 162 px thay vì 168, lề trên 59 px; mặc định 3 hàng; thấp nhất 2 hàng, ô 168 px. Một trang luôn
+     * chứa ít nhất [MIN_TOOLS] tiện ích (người dùng muốn 2026-11-22). Trước đây tối đa 3 hàng, có lề dưới 18 dp (cỡ mặc
+     * định chỉ 2 hàng). Dải ✎ tính 44 dp: dải 48 dp của Gboard lấn xuống đáy bàn phím chừng 4 dp.
+     */
+    private fun pageFit(count: Int): PageFit {
+        val tile = context.dpi(TileGrid.HEIGHT)
+        val pad = context.dpi(TileGrid.PADDING_TOP)
+        val footer = context.dpi(FOOTER)
         val panel = layoutParams?.height ?: 0
-        if (panel <= 0) return MAX_ROWS
+        if (panel <= 0) return PageFit(MAX_ROWS, tile, pad, pad, footer)
         val gap = context.dpi(TileGrid.V_GAP)
-        val room = panel - context.dpi(FOOTER) - 2 * context.dpi(TileGrid.PADDING_TOP)
-        return ((room + gap) / (context.dpi(TileGrid.HEIGHT) + gap)).coerceIn(1, MAX_ROWS)
+        // Màn hình ngang chưa đo Gboard: giữ như trước (tối đa 3 hàng, lề dưới 18 dp, dải chấm trang 48 dp).
+        if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
+            return PageFit(((panel - footer - 2 * pad + gap) / (tile + gap)).coerceIn(1, MAX_ROWS), tile, pad, pad, footer)
+        }
+        val bottom = context.dpi(PORTRAIT_FOOTER)
+        val room = panel - bottom
+        val columns = TileGrid.columnsFor(context)
+        val need = (MIN_TOOLS + columns - 1) / columns
+        val rows = maxOf(kotlin.math.round((room + gap - pad).toFloat() / (tile + gap)).toInt(), need, 1)
+        val full = pad + rows * tile + (rows - 1) * gap
+        if (full <= room) return PageFit(rows, tile, pad, 0, bottom)
+        val scale = (room - (rows - 1) * gap).toFloat() / (rows * tile + pad)
+        return PageFit(rows, (tile * scale).toInt(), (pad * scale).toInt(), 0, bottom)
     }
 
     /** Ô của [id] (dùng lại để các ô trượt mượt khi kéo thả), đã gỡ khỏi chỗ cũ. */
@@ -261,44 +315,47 @@ class ToolsPanel(
     /** Nút nổi theo ngón tay khi kéo: chỉ icon trong nền tròn. */
     fun makeFloating(id: ToolId): View = ImageView(context).apply {
         setImageResource(id.icon)
-        setColorFilter(theme.text)
+        setColorFilter(theme.toolIcon, android.graphics.PorterDuff.Mode.SRC_IN)
         scaleType = ImageView.ScaleType.CENTER
         background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(theme.pressedKey)
         }
         elevation = context.dp(8f)
-        contentDescription = id.label(style)
+        contentDescription = id.spokenLabel(style)
     }
 
     /** Ô bo tròn: icon + tên một dòng. */
     private fun makeTile(id: ToolId): View = LinearLayout(context).apply {
         orientation = HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        // Như Gboard (đo trên điện thoại 2026-11-18): biểu tượng 28 dp cách mép ô 18 dp, chữ 16 sp cách biểu tượng 14 dp.
-        setPadding(context.dpi(18), 0, context.dpi(12), 0)
+        // Như Gboard (đo trên điện thoại 2026-11-18 và 2026-11-22): biểu tượng 28 dp, tâm cách mép ô 30 dp; chữ 16 sp bắt
+        // đầu ở 60 dp. "Cỡ chữ": ô giữ nguyên, icon to quanh tâm đó, chữ vẫn bắt đầu ở 60 dp.
+        val icon = 28f * FontScale.icon(FontScale.TILE_ICON, labelScale)
+        setPadding(context.dp(30f - icon / 2).toInt(), 0, context.dpi(12), 0)
         background = GradientDrawable().apply {
             cornerRadius = context.dp(TileGrid.HEIGHT / 2f)
             setColor(theme.composeBox)
         }
         addView(ImageView(context).apply {
             setImageResource(id.icon)
-            setColorFilter(theme.text)
+            setColorFilter(theme.toolIcon, android.graphics.PorterDuff.Mode.SRC_IN)
             scaleType = ImageView.ScaleType.FIT_CENTER
-        }, LayoutParams(context.dpi(28), context.dpi(28)))
+        }, LayoutParams(context.dp(icon).toInt(), context.dp(icon).toInt()))
         addView(TextView(context).apply {
             // Tên Hán Nôm có chữ ngoài BMP (𢷮, 𡱩, 𠬠, 𢬣...): dùng phông Hán Nôm đi kèm.
             text = context.hanNomText(id.label(style))
             setTextColor(theme.text)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            val base = FontScale.TILE_TEXT_BASE
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f * FontScale.apply(textScale, base) / base)
             isSingleLine = true
             // Tên dài hơn ô (màn hình ngang: "Chỉnh sửa văn bản", "Ngôn ngữ tiếp theo") chạy ngang như bảng quảng cáo,
             // không cắt "…" (người dùng muốn 2026-11-18); vừa ô thì đứng yên.
             ellipsize = android.text.TextUtils.TruncateAt.MARQUEE
             marqueeRepeatLimit = -1
             isSelected = true
-        }, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = context.dpi(14) })
-        contentDescription = id.label(style)
+        }, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = context.dp(30f - icon / 2).toInt() })
+        contentDescription = id.spokenLabel(style)
         setOnClickListener { if (!editing) onUse(id) }
         // Chỉ kéo thả được trong chế độ sửa (đã ấn ✎); ngoài đó giữ ô không làm gì (người dùng muốn 2026-11-18).
         setOnLongClickListener {
@@ -333,24 +390,33 @@ class ToolsPanel(
     }
 
     companion object {
-        /** Số hàng nhiều nhất một trang (như Gboard). */
+        /** Số hàng nhiều nhất một trang, màn hình ngang (chưa đo Gboard ở ngang). */
         private const val MAX_ROWS = 3
+        /** Một trang chứa ít nhất chừng này tiện ích ([pageFit]). */
+        private const val MIN_TOOLS = 4
+        /** Dải chấm trang / nút ✎ màn hình dọc (dp), xem [pageFit]. */
+        private const val PORTRAIT_FOOTER = 44
         /** Chiều cao dải chấm trang và nút ✎ (dp). */
         private const val FOOTER = 48
     }
 }
 
 /** Lưới các ô cao bằng nhau, số cột theo [columnsFor]; ít nhất [minRows] hàng (trang lưới không co lại khi ít ô). */
-class TileGrid(context: Context, private val minRows: Int) : ViewGroup(context) {
-    private val tileHeight = context.dpi(HEIGHT)
+class TileGrid(
+    context: Context,
+    private val minRows: Int,
+    /** Chiều cao ô, lề trên / dưới (px); màn hình dọc theo cỡ bàn phím (ToolsPanel.pageFit). */
+    private val tileHeight: Int = context.dpi(HEIGHT),
+    padTop: Int = context.dpi(PADDING_TOP),
+    padBottom: Int = context.dpi(PADDING_TOP),
+) : ViewGroup(context) {
     private val hGap = context.dpi(H_GAP)
     private val vGap = context.dpi(V_GAP)
     private val columns get() = columnsFor(context)
 
     init {
         val pad = context.dpi(PADDING)
-        val padTop = context.dpi(PADDING_TOP)
-        setPadding(pad, padTop, pad, padTop)
+        setPadding(pad, padTop, pad, padBottom)
     }
 
     private fun cellWidth(w: Int) = (w - paddingLeft - paddingRight - (columns - 1) * hGap) / columns

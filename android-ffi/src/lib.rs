@@ -320,7 +320,7 @@ pub unsafe extern "system" fn Java_com_hannom_ime_NativeCore_candidatesNarrowed(
     let before = from_java(env, before);
     let out = guard(String::new(), || {
         let e = engine(handle);
-        let cands = if locks.is_empty() { e.candidates_narrowed(&keys, &picked) } else { e.candidates_locked(&keys, &before, &locks, &picked) };
+        let cands = if locks.is_empty() { e.candidates_narrowed_after(&keys, &before, &picked) } else { e.candidates_locked(&keys, &before, &locks, &picked) };
         candidate_records(e, &cands, limit)
     });
     to_java(env, &out)

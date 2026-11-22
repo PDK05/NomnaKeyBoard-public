@@ -42,15 +42,43 @@ impl Entry {
         if text.is_empty() {
             return Err(EntryError::EmptyText);
         }
-        if reading.is_empty() {
-            return Err(EntryError::EmptyReading);
+        if let Some(c) = text.chars().find(|&c| is_forbidden(c)) {
+            return Err(EntryError::InvalidChar(c));
         }
         let chars = text.chars().filter(|&c| !is_variation_selector(c)).count();
+        if reading.starts_with('\\') {
+            // Mã kiểu LaTeX (`π;\pi`, người dùng muốn 2026-11-23): `\` rồi chữ cái ASCII, giữ hoa thường (`\Pi` là Π).
+            // Chỉ nhận đúng dạng này, không ký hiệu / mã điều khiển nào khác.
+            let rest = &reading[1..];
+            let valid = !rest.is_empty() && reading.chars().count() <= MAX_SHORTCUT_CHARS && rest.chars().all(|c| c.is_ascii_alphabetic());
+            if !valid {
+                return Err(EntryError::InvalidSyllable(reading));
+            }
+            if chars > MAX_TEXT_CHARS {
+                return Err(EntryError::TextTooLong(chars));
+            }
+            return Ok(Entry { text: text.to_string(), reading });
+        }
+        if reading.is_empty() {
+            // Không có chữ Hán Nôm nào (từ ngoại lai, ký hiệu…) thì được để trống âm đọc (người dùng muốn 2026-11-23):
+            // gõ chính chữ đó là ra ([`own_key`]).
+            if text.chars().any(is_han) {
+                return Err(EntryError::EmptyReading);
+            }
+            if chars > MAX_TEXT_CHARS {
+                return Err(EntryError::TextTooLong(chars));
+            }
+            return Ok(Entry { text: text.to_string(), reading });
+        }
         if chars > MAX_TEXT_CHARS {
             return Err(EntryError::TextTooLong(chars));
         }
         if is_shortcut(&reading) {
-            let valid = reading.chars().count() <= MAX_SHORTCUT_CHARS && reading.chars().all(char::is_alphabetic);
+            // Chữ cái, có thể kèm chữ số ASCII sau chữ cái đầu (`红;hong1`, `洪;hong11`: người dùng tự đặt cách gõ cho
+            // ngôn ngữ khác, 2026-11-23). Không ký hiệu, dấu cách hay mã điều khiển.
+            let valid = reading.chars().count() <= MAX_SHORTCUT_CHARS
+                && reading.chars().next().is_some_and(char::is_alphabetic)
+                && reading.chars().all(|c| c.is_alphabetic() || c.is_ascii_digit());
             if !valid {
                 return Err(EntryError::InvalidSyllable(reading));
             }
@@ -82,6 +110,12 @@ impl Entry {
 
     /// Khoá của mã gõ tắt: chữ thường, giữ `đ` (mã `vmđhs` khác `vmdhs`).
     pub fn shortcut_key(&self) -> String {
+        if self.reading.is_empty() {
+            return own_key(&self.text);
+        }
+        if self.reading.starts_with('\\') {
+            return self.reading.clone();
+        }
         self.reading.chars().map(text::lower).collect()
     }
 
@@ -94,6 +128,11 @@ impl Entry {
 /// Âm đọc NFC, chữ thường, các âm tiết cách nhau một dấu cách. Tệp từ điển hầu như đã đúng sẵn: kiểm tra nhanh
 /// rồi giữ nguyên, khỏi dựng lại chuỗi (nạp từ điển nhanh hơn).
 fn normalize_reading(reading: &str) -> String {
+    // Mã kiểu LaTeX giữ nguyên hoa thường (`\Pi` khác `\pi`); dấu cách bên trong thì [`Entry::new`] từ chối.
+    let trimmed = reading.trim();
+    if trimmed.starts_with('\\') {
+        return trimmed.to_string();
+    }
     let tidy = !reading.starts_with(' ')
         && !reading.ends_with(' ')
         && !reading.contains("  ")
@@ -125,6 +164,27 @@ pub fn is_reading_separator(c: char) -> bool {
     matches!(c, ',' | '，' | '、')
 }
 
+/// Ký tự không được có trong chữ của mục: ký tự điều khiển (xuống dòng, tab…), `;` (làm hỏng dòng tệp từ điển) và các
+/// ký tự định hướng vô hình hay dùng để giả mạo chữ hiển thị (người dùng muốn chặn mã độc, 2026-11-23).
+fn is_forbidden(c: char) -> bool {
+    c.is_control()
+        || c == ';'
+        || matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}')
+}
+
+/// Mã gõ của mục không âm đọc (từ ngoại lai `alo;;0`): chính chữ của nó, viết thường, bỏ dấu cách. Gõ đúng các
+/// chữ cái này thì hiện mục như một mã gõ tắt (người dùng muốn 2026-11-23).
+pub fn own_key(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).map(text::lower).collect()
+}
+
+/// Chữ Hán Nôm: chữ Hán thống nhất (cả các vùng mở rộng), chữ tương thích, bộ thủ, `々〇` và số Hàng Châu.
+pub fn is_han(c: char) -> bool {
+    matches!(c,
+        '\u{2E80}'..='\u{2FDF}' | '\u{3005}'..='\u{3007}' | '\u{3021}'..='\u{3029}' | '\u{3038}'..='\u{303B}'
+        | '\u{3400}'..='\u{4DBF}' | '\u{4E00}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}' | '\u{20000}'..='\u{3FFFF}')
+}
+
 fn is_variation_selector(c: char) -> bool {
     matches!(c, '\u{FE00}'..='\u{FE0F}' | '\u{E0100}'..='\u{E01EF}')
 }
@@ -140,6 +200,7 @@ pub enum EntryError {
     EmptyReading,
     TextTooLong(usize),
     InvalidSyllable(String),
+    InvalidChar(char),
 }
 
 impl fmt::Display for EntryError {
@@ -153,6 +214,7 @@ impl fmt::Display for EntryError {
             EntryError::EmptyText => write!(f, "thiếu chữ trước dấu ;"),
             EntryError::EmptyReading => write!(f, "thiếu âm đọc sau dấu ;"),
             EntryError::TextTooLong(n) => write!(f, "chữ dài {n} ký tự, tối đa {MAX_TEXT_CHARS}"),
+            EntryError::InvalidChar(c) => write!(f, "chữ có ký tự không cho phép (U+{:04X})", *c as u32),
             EntryError::InvalidSyllable(s) => write!(
                 f,
                 "\"{s}\" không phải âm tiết tiếng Việt, cũng không phải mã gõ tắt (chỉ gồm chữ cái, tối đa {MAX_SHORTCUT_CHARS})"
@@ -295,7 +357,13 @@ impl Dictionary {
 
     fn position(&self, text: &str, reading: &str) -> Option<usize> {
         let key = text::fold_key(reading);
-        let ids = if is_shortcut(reading) { self.shortcuts.get(reading) } else { self.index.get(&key) };
+        let ids = if reading.is_empty() {
+            self.shortcuts.get(&own_key(text))
+        } else if is_shortcut(reading) {
+            self.shortcuts.get(reading)
+        } else {
+            self.index.get(&key)
+        };
         ids?.iter().copied().find(|&i| self.entries[i].text == text && self.entries[i].reading == reading)
     }
 
@@ -394,6 +462,7 @@ impl Dictionary {
                 self.texts.insert(e.text.clone(), 1);
             }
         }
+        // Mục không âm đọc (không có chữ Hán Nôm, [`Entry::new`]) là mã gõ tắt bằng chính chữ của nó ([`own_key`]).
         let phrase = e.reading.contains(' ');
         // Có dấu cách thì không phải mã gõ tắt ([`is_shortcut`]), khỏi kiểm tra âm tiết.
         if !phrase && !is_syllable(&e.reading) {
@@ -696,7 +765,7 @@ mod tests {
         assert_eq!(Entry::parse_many("樂", "lạc，nhạc").unwrap(), Entry::parse_many("樂", "lạc,nhạc").unwrap());
         assert_eq!(Entry::parse_many("樂", "lạc、 nhạc, lạo").unwrap().len(), 3);
         assert_eq!(Dictionary::from_text("樂;lạc，nhạc;1\n").1.errors.len(), 1);
-        assert!(Entry::parse_many("中", "trung,x1").is_err());
+        assert!(Entry::parse_many("中", "trung,1x").is_err());
     }
 
     #[test]
@@ -711,6 +780,29 @@ mod tests {
         assert_eq!(dict.reading_of("空"), Some("không"));
         assert_eq!(dict.freq_of("越南", "vn"), Some(0));
         assert!(Entry::new("喃", "abcdefghijklm").is_err());
+    }
+
+    #[test]
+    fn empty_reading_only_without_han() {
+        // Không có chữ Hán Nôm: để trống âm được; có (dù lẫn chữ Latinh) thì vẫn phải có âm.
+        assert_eq!(Entry::new("OK!", " ").unwrap().reading, "");
+        assert_eq!(Entry::new("😀", "").unwrap().reading, "");
+        assert_eq!(Entry::new("喃", ""), Err(EntryError::EmptyReading));
+        assert_eq!(Entry::new("a喃", ""), Err(EntryError::EmptyReading));
+        assert_eq!(Entry::new("𡨸", ""), Err(EntryError::EmptyReading));
+        let (mut dict, report) = Dictionary::from_text("OK;;2\n喃;nôm;3\n");
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert_eq!(dict.len(), 2);
+        assert_eq!(dict.freq_of("OK", ""), Some(2));
+        // Không trùng; gõ chính chữ (viết thường) là ra, như mã gõ tắt; không phải âm của chữ nào.
+        assert!(!dict.insert(Entry::new("OK", "").unwrap()));
+        assert_eq!(dict.lookup_shortcut("ok").next().unwrap().1.text, "OK");
+        assert_eq!(dict.lookup_shortcut_prefix("o").next().unwrap().1.text, "OK");
+        assert_eq!(dict.lookup("").count(), 0);
+        assert_eq!(dict.reading_of("OK"), None);
+        assert!(Dictionary::from_text("喃;;1\n").1.errors.len() == 1);
+        assert!(dict.remove(&Entry::new("OK", "").unwrap()));
+        assert_eq!(dict.len(), 1);
     }
 
     #[test]

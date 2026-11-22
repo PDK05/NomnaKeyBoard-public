@@ -88,7 +88,7 @@ abstract class DictPage<T> : Activity() {
     /** Nút + (thêm); `null` thì không có. */
     protected open val onAdd: (() -> Unit)? = null
     /** Tính mỗi lần đọc: lúc dựng activity chưa có Context để đọc ngôn ngữ ứng dụng. */
-    protected open val addDescription get() = tr("Thêm", "Add", "添")
+    protected open val addDescription get() = tr("Thêm", "Add")
     protected open fun selectable(item: T) = true
     /** ⋮ có mục Xoá không. */
     protected open val deletable = true
@@ -145,17 +145,17 @@ abstract class DictPage<T> : Activity() {
                 }
             })
         }
-        clearButton = barIcon(R.drawable.ic_close, tr("Xoá ô tìm", "Clear search", "𫨮嗚尋")) { search.setText("") }.apply { visibility = View.GONE }
-        searchButton = barIcon(R.drawable.ic_search, tr("Tìm", "Search", "尋")) { openSearch() }
+        clearButton = barIcon(R.drawable.ic_close, tr("Xoá ô tìm", "Clear search")) { search.setText("") }.apply { visibility = View.GONE }
+        searchButton = barIcon(R.drawable.ic_search, tr("Tìm", "Search")) { openSearch() }
         addButton = onAdd?.let { add -> barIcon(R.drawable.ic_add, addDescription) { add() } }
         lateinit var more: View
-        more = barIcon(R.drawable.ic_more_vert, tr("Tuỳ chọn khác", "More options", "隨𫾗恪")) { showMenu(more) }
+        more = barIcon(R.drawable.ic_more_vert, tr("Tuỳ chọn khác", "More options")) { showMenu(more) }
         bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(colors.bar)
             minimumHeight = dpi(64)
-            backButton = barIcon(R.drawable.ic_arrow_back, tr("Quay lại", "Back", "𫏓徠")) {
+            backButton = barIcon(R.drawable.ic_arrow_back, tr("Quay lại", "Back")) {
                 if (selected.isNotEmpty() && search.visibility != View.VISIBLE) clearSelection() else goBack()
             }
             addView(backButton, LinearLayout.LayoutParams(dpi(56), dpi(56)).apply { marginStart = dpi(4) })
@@ -181,7 +181,8 @@ abstract class DictPage<T> : Activity() {
             }
         }
         val empty = TextView(this).apply {
-            text = tr("Không có mục nào", "No entries", "空𣎏目𱜢")
+            // 𣎏 nằm ngoài BMP: cần phông Hán Nôm đi kèm.
+            text = hanNomText(tr("Không có mục nào", "No entries", "空𣎏目芾"))
             setTextColor(colors.summary)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             gravity = Gravity.CENTER
@@ -347,8 +348,8 @@ abstract class DictPage<T> : Activity() {
         // Có mục đã chọn (không đang tìm): nút đầu thanh thành ✕ bỏ chọn.
         val cancel = selected.isNotEmpty() && search.visibility != View.VISIBLE
         backButton.setImageResource(if (cancel) R.drawable.ic_close else R.drawable.ic_arrow_back)
-        backButton.contentDescription = if (cancel) tr("Bỏ chọn", "Deselect", "𠬃𫾗") else tr("Quay lại", "Back", "𫏓徠")
-        search.hint = if (selected.isNotEmpty()) tr("Đã chọn ${selected.size} · $searchHint", "${selected.size} selected · $searchHint", "㐌𫾗${selected.size}·${searchHint}") else searchHint
+        backButton.contentDescription = if (cancel) tr("Bỏ chọn", "Deselect") else tr("Quay lại", "Back")
+        search.hint = hanNomText(if (selected.isNotEmpty()) tr("Đã chọn ${selected.size} · $searchHint", "${selected.size} selected · $searchHint", "㐌𫾗${selected.size}·${searchHint}") else searchHint)
         val query = search.text.toString()
         subtitle.text = when {
             query.isNotBlank() -> tr("${number(shown.size)} kết quả", "${number(shown.size)} results", "${number(shown.size)}結果")
@@ -627,7 +628,7 @@ class DictionaryActivity : DictPage<Lang>() {
     override fun delete(items: List<Lang>, all: Boolean) {
         val langs = if (all) Lang.entries else items
         val personal = langs.sumOf { l -> Dictionaries.list(this, l).count { !it.isDefault } }
-        if (personal == 0) return toast(tr("Không có từ điển cá nhân nào", "No personal dictionaries", "空𣎏辭典個人𱜢"))
+        if (personal == 0) return toast(tr("Không có từ điển cá nhân nào", "No personal dictionaries", "空𣎏辭典個人芾"))
         confirm(
             tr(
                 "Xoá $personal từ điển cá nhân của ${langs.joinToString(", ") { it.titleIn(this) }}? Từ điển mặc định vẫn " +
@@ -707,7 +708,7 @@ class DictListActivity : DictPage<DictInfo>() {
 
     override fun pageTitle() = lang.titleIn(this)
     override val searchHint get() = tr("Tìm từ điển", "Search dictionaries", "尋辭典")
-    override val addDescription get() = tr("Thêm từ điển", "Add dictionary", "添辭典")
+    override val addDescription get() = tr("Thêm từ điển", "Add dictionary")
 
     override val onAdd: () -> Unit = {
         askName(
@@ -764,7 +765,7 @@ class DictListActivity : DictPage<DictInfo>() {
 
     override fun delete(items: List<DictInfo>, all: Boolean) {
         val gone = (if (all) Dictionaries.list(this, lang) else items).filter { !it.isDefault }
-        if (gone.isEmpty()) return toast(tr("Không có từ điển cá nhân nào", "No personal dictionaries", "空𣎏辭典個人𱜢"))
+        if (gone.isEmpty()) return toast(tr("Không có từ điển cá nhân nào", "No personal dictionaries", "空𣎏辭典個人芾"))
         confirm(
             tr(
                 "Xoá ${gone.joinToString(", ") { it.name }}? ${lang.defaultName} vẫn giữ. Nên xuất tệp để lưu trước.",
@@ -854,9 +855,11 @@ class DictWordsActivity : DictPage<DictRow>() {
         val message = if (store.hasReading) {
             tr(
                 "Tệp nhập / xuất là văn bản UTF-8, mỗi dòng: chữ;âm đọc;độ phổ biến\n\n" +
-                    "固;cố;3\n\nMỗi âm một dòng. Độ phổ biến tăng mỗi khi chọn chữ khi gõ.",
+                    "固;cố;3\n\nMỗi âm một dòng. Độ phổ biến tăng mỗi khi chọn chữ khi gõ.\n\n" +
+                    "Từ ngoại lai (không có chữ Hán Nôm) được bỏ trống âm đọc, gõ chính từ đó là ra:\n\nalo;;0",
                 "Import / export files are UTF-8 text, one line each: character;reading;frequency\n\n" +
-                    "固;cố;3\n\nOne reading per line. Frequency goes up each time you pick the character while typing.",
+                    "固;cố;3\n\nOne reading per line. Frequency goes up each time you pick the character while typing.\n\n" +
+                    "Loanwords (no Hán Nôm characters) may leave the reading empty; type the word itself to get it:\n\nalo;;0",
                 "集 入／出 𪜀文本UTF-8，每𣳔：𡨸；音讀；度譜遍\n\n固;cố;3\n\n每音𠬠𣳔。度譜遍增每欺𫾗𡨸欺𢱗。",
             )
         } else {
@@ -959,14 +962,17 @@ class DictWordsActivity : DictPage<DictRow>() {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val freq = freqField.text.toString().trim().let { if (it.isEmpty()) 0 else it.toIntOrNull() }
                 if (freq == null || freq < 0) {
-                    error.text = tr("Độ phổ biến phải là số nguyên không âm", "Frequency must be a non-negative whole number", "度譜遍𬆃𪜀數原空陰")
+                    error.text = hanNomText(tr("Độ phổ biến phải là số nguyên không âm", "Frequency must be a non-negative whole number", "度譜遍𬆃𪜀數原空陰"))
                     return@setOnClickListener
                 }
                 // Ô bỏ trống: nói theo ô của hộp thoại, không theo định dạng tệp của lõi ("thiếu âm đọc sau dấu ;" — người
                 // dùng thấy không đúng trải nghiệm, 2026-11-18).
                 val blank = when {
                     textField.text.isBlank() -> if (nom) tr("Chưa nhập chữ", "No character entered", "𣗓入𡨸") else tr("Chưa nhập từ", "No word entered", "𣗓入詞")
-                    nom && readingField.text.isBlank() -> tr("Chưa nhập âm đọc", "No reading entered", "𣗓入音讀")
+                    // Không có chữ Hán Nôm nào (chữ Latinh, ký hiệu…) thì được để trống âm đọc (người dùng 2026-11-23).
+                    nom && readingField.text.isBlank() && textField.text.codePoints().anyMatch {
+                        Character.UnicodeScript.of(it) == Character.UnicodeScript.HAN
+                    } -> tr("Chưa nhập âm đọc", "No reading entered", "𣗓入音讀")
                     else -> null
                 }
                 if (blank != null) {

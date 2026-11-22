@@ -52,7 +52,7 @@ object KeyboardDialog {
                 setPadding(context.dpi(16), context.dpi(12), context.dpi(16), context.dpi(12))
                 if (row.checked) background = GradientDrawable().apply {
                     cornerRadius = context.dp(32f)
-                    setColor(theme.accent and 0x00FFFFFF or 0x30000000)
+                    setColor(theme.dialogRow)
                 }
                 setOnClickListener {
                     dialog.dismiss()
@@ -61,21 +61,21 @@ object KeyboardDialog {
             }
             line.addView(ImageView(context).apply {
                 setImageResource(R.drawable.ic_check)
-                setColorFilter(theme.accent)
+                setColorFilter(theme.dialogAccent)
                 visibility = if (row.checked) View.VISIBLE else View.INVISIBLE
             }, LinearLayout.LayoutParams(context.dpi(24), context.dpi(24)).apply { marginEnd = context.dpi(16) })
             val texts = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
             // Bộ gõ khác bật nhiều ngôn ngữ thì tên rất dài: cắt còn hai dòng (như Gboard).
             texts.addView(TextView(context).apply {
                 text = context.hanNomText(row.title.toString())
-                setTextColor(if (row.checked) theme.accent else theme.text)
+                setTextColor(if (row.checked) theme.dialogAccent else theme.text)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
                 maxLines = 2
                 ellipsize = android.text.TextUtils.TruncateAt.END
             })
             if (!row.subtitle.isNullOrEmpty()) texts.addView(TextView(context).apply {
                 text = context.hanNomText(row.subtitle.toString())
-                setTextColor(if (row.checked) theme.accent else theme.hintText)
+                setTextColor(if (row.checked) theme.dialogAccent else theme.hintText)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
@@ -109,7 +109,7 @@ object KeyboardDialog {
             }
             card.addView(TextView(context).apply {
                 text = context.hanNomText(action.first)
-                setTextColor(theme.accent)
+                setTextColor(theme.dialogAccent)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
                 setPadding(context.dpi(16), context.dpi(16), context.dpi(8), context.dpi(8))
                 setOnClickListener {

@@ -98,7 +98,7 @@ class ThemePicker(private val activity: Activity, private val ui: SettingsColors
                     shape = GradientDrawable.OVAL
                     setColor(ui.bar)
                 }
-                contentDescription = activity.tr("Mở rộng", "Expand", "𨷑𢌊")
+                contentDescription = activity.tr("Mở rộng", "Expand")
                 setOnClickListener { onExpand() }
             }, LinearLayout.LayoutParams(activity.dpi(24), activity.dpi(24)))
         }
@@ -197,7 +197,7 @@ class ThemePicker(private val activity: Activity, private val ui: SettingsColors
                 setColorFilter(ui.primary)
                 scaleType = ImageView.ScaleType.CENTER
                 background = a.iconRipple(ui)
-                contentDescription = a.tr("Xóa", "Delete", "𫨮")
+                contentDescription = a.tr("Xóa", "Delete")
                 setOnClickListener {
                     confirmDelete {
                         settings.removeMyTheme(spec.id, initialBorders)

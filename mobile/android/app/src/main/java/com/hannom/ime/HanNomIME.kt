@@ -95,6 +95,8 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
     private val telex get() = effectiveMode == Mode.HAN_NOM && layout == Layout.TELEX
 
     private companion object {
+        /** Ký tự "chữ thô" của lõi (`telex::RAW`): đầu chữ đã huỷ dấu, không bao giờ hiện ra. */
+        const val RAW = ""
         /** Số chữ đầu trên thanh gợi ý được tính trước lúc chọn ([prefetchPicks]). */
         const val PREFETCH_PICKS = 4
         /** Số chữ nhớ dạng hiển thị ([shownWord]); đầy thì xoá hết. */
@@ -514,6 +516,10 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
             // Lựa chọn ưu tiên: hàng số (ô mật khẩu có thể vẫn hiện), phông và cỡ chữ trên phím.
             r.keyboard.numberRow = settings.numberRow || (secure && settings.numberRowPassword)
             r.keyboard.labelScale = settings.labelScale(this)
+            r.bar.labelScale = r.keyboard.labelScale
+            r.bar.textScale = if (settings.fontSize == Settings.DEFAULT) 1f else r.keyboard.labelScale
+            r.grid.textScale = r.bar.textScale
+            r.grid.iconScale = r.keyboard.labelScale
             r.keyboard.refreshFont()
             val config = resources.configuration
             val landscape = config.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
@@ -1054,7 +1060,8 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         if (!r.bar.expanded || handwriting || keys.isEmpty()) return 0
         val k = keys.toString()
         val range = engine.syllableChunks(k).getOrNull(n) ?: return 0
-        val chunk = hanNomComposing(k.substring(range)).trim()
+        // Đọc đoạn như phần sau các âm đã chốt ([tailKeys]): `rr` huỷ dấu hiện `r`, khớp khung gõ `rnet`.
+        val chunk = hanNomComposing(tailKeys(k, range.first, range.last + 1)).trim()
         return if (chunk.isNotEmpty() && body.startsWith(chunk)) chunk.length else 0
     }
 
@@ -1071,7 +1078,28 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
     /** Phím sau [n] âm đầu của [k], theo các đoạn âm của lõi ([HanNomEngine.syllableChunks]: `twcmn` → tw, c, m, n). */
     private fun afterLocked(k: String, n: Int): String {
         val chunks = engine.syllableChunks(k)
-        return if (n < chunks.size) k.substring(chunks[n].first) else ""
+        return if (n < chunks.size) tailKeys(k, chunks[n].first) else ""
+    }
+
+    /**
+     * Phím từ [start] tới hết, để hiện riêng phần sau các âm đã chốt mà vẫn đúng như khung gõ hiện cả chữ: chữ đã huỷ dấu
+     * trước [start] (có ký tự thô, hay phím dấu gõ đôi) hoặc bắt đầu bằng phím dấu gõ đôi (`interrnet` chốt in, te: còn
+     * `rrnet`) thì phần còn lại là chữ thô, phím đôi thành một chữ (`rnet`, không `rrnet`; người dùng báo 2026-11-23).
+     */
+    private fun tailKeys(k: String, start: Int, end: Int = k.length): String {
+        val sub = k.substring(start, end)
+        val wordStart = k.lastIndexOf('\'', start - 1) + 1
+        val before = k.substring(wordStart, start)
+        fun doubled(s: String, i: Int) = i + 1 < s.length && s[i].lowercaseChar() == s[i + 1].lowercaseChar() && s[i].lowercaseChar() in "sfrxj"
+        // Cả chữ hiện nguyên phím (Telex không ghép gì: `worcestershire`) thì phần sau cũng giữ nguyên, không tự ghép dấu
+        // khi tách ra (`rcestershire` thành rcếtrshỉe; người dùng báo 2026-11-23).
+        val wordEnd = k.indexOf('\'', start).let { if (it < 0) k.length else it }
+        val word = k.substring(wordStart, wordEnd)
+        val plainWord = word.isNotEmpty() && hanNomComposing(word).replace(" ", "") == word.replace(RAW, "")
+        val undone = RAW in before || before.indices.any { doubled(before, it) } || (plainWord && start > wordStart)
+        val lead = doubled(sub, 0)
+        if (!undone && !lead) return sub
+        return RAW + (if (lead) sub.substring(1) else sub).replace(RAW, "")
     }
 
     /**
@@ -1099,8 +1127,10 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
      * phụ âm (gõ tắt) giữ phím, trừ `dd` là đ (người dùng báo 2026-11-17: `‹ dd`, `中央dd`).
      */
     private fun shownChunk(raw: String): String =
-        if (raw.any { it in "aeiouy" }) hanNomComposing(raw).trim()
-        else raw.replace("dd", "đ").replace("DD", "Đ").replace("Dd", "Đ").replace("dD", "đ")
+        if (raw.any { it in "aeiouy" }) hanNomComposing(raw).trim().replace(RAW, "")
+        // Phím dấu gõ đôi để huỷ dấu (`computerr` hiện computer) là một chữ: hiện `r`, không `rr` (người dùng báo 2026-11-23).
+        else if (raw.length == 2 && raw[0].lowercaseChar() == raw[1].lowercaseChar() && raw[0].lowercaseChar() in "sfrxj") raw.substring(1)
+        else raw.replace(RAW, "").replace("dd", "đ").replace("DD", "Đ").replace("Dd", "Đ").replace("dD", "đ")
 
     /**
      * Gợi ý của bảng thả (đã chốt âm / đang chọn ở cột trái / bật 𡨸單): thêm chữ Latin của âm đang được trỏ tới ở vị trí
@@ -1141,14 +1171,14 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         val (latin, consumed) = if (current.isEmpty()) {
             var e = wordEnd
             while (e < k.length && k[e] == '\'') e++
-            shownChunk(k.substring(start, wordEnd)) to e
+            shownChunk(tailKeys(k, start, wordEnd)) to e
         } else {
             adjustedLatin(shownChunk(k.substring(chunks[n]).replace("'", "")), current) to endOf(n)
         }
         if (latin.isEmpty()) return list
         val out = list.toMutableList()
         addLiteral(out, head.text + latin, consumed, at = 1, reading = "${head.reading} $latin".trim())
-        val rest = telexWords(k.substring(start)).map { it.trim() }.filter { it.isNotEmpty() }
+        val rest = telexWords(tailKeys(k, start)).map { it.trim().replace(RAW, "") }.filter { it.isNotEmpty() }
         if (rest.size > 1) {
             val phrase = rest.joinToString(" ")
             addLiteral(out, head.text + phrase, k.length, reading = "${head.reading} $phrase".trim(), panelFirst = true)
@@ -1178,8 +1208,10 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         out: MutableList<Candidate>, text: String, consumed: Int, at: Int = out.size, reading: String = text,
         panelFirst: Boolean = false,
     ) {
+        // Ký tự thô của lõi (U+E000, chữ đã huỷ dấu) không bao giờ hiện ra (người dùng muốn 2026-11-23).
+        val text = text.replace(RAW, "")
         if (text.isEmpty() || out.any { it.text == text }) return
-        out.add(at.coerceAtMost(out.size), Candidate(text, reading, consumed, literal = true, panelFirst = panelFirst))
+        out.add(at.coerceAtMost(out.size), Candidate(text, reading.replace(RAW, ""), consumed, literal = true, panelFirst = panelFirst))
     }
 
     private fun refresh() {
@@ -1294,7 +1326,9 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
     }
 
     /** Khung gõ Hán Nôm: không tự cách chữ, chỉ cách ở chỗ người dùng ấn phím cách (lưu là dấu tách `'`). */
-    private fun hanNomComposing(k: String = keys.toString()): String = telexWords(k).joinToString(" ")
+    // Ký tự thô không bao giờ hiện, cũng không chiếm chỗ (ô vàng, con trỏ tính trên chính chữ này; người dùng báo ô vàng
+    // lệch khỏi chữ r sau khi huỷ dấu, 2026-11-23).
+    private fun hanNomComposing(k: String = keys.toString()): String = telexWords(k).joinToString(" ").replace(RAW, "")
 
     // ---- Con trỏ trong khung gõ Hán Nôm ----
     //
@@ -1397,7 +1431,9 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         val chunks = engine.syllableChunks(k)
         val n = lockLabels.size
         val bodyStart = if (n < chunks.size) chunks[n].first else k.length
-        return lockedHead() + hanNomComposing(k.substring(bodyStart))
+        // Như khung gõ ([showComposing] / [afterLocked]): đọc phần chưa chốt bằng [tailKeys], kẻo con trỏ cuối nhảy vào
+        // giữa (`pheromones` chốt phe: khung gõ romones mà tính theo rômné; người dùng báo 2026-11-23).
+        return lockedHead() + hanNomComposing(tailKeys(k, bodyStart))
     }
 
     private fun shownStops(): Pair<String, List<Pair<Int, Int>>> {
@@ -1421,8 +1457,17 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
         if (n > 0 && head.endsWith(' ')) stops.add(lastEnd to head.length - 1)
         val gap = k.substring(lastEnd.coerceAtMost(bodyStart), bodyStart)
         if (gap.contains("''")) stops.add(lastEnd + gap.indexOf("''") + 1 to head.length)
-        val bodyKeys = k.substring(bodyStart)
-        for ((p, s) in caretStops(bodyKeys)) stops.add(bodyStart + p to head.length + s)
+        // Phần chưa chốt đọc như khung gõ ([tailKeys]): có thể thêm ký tự thô ở đầu, gộp cặp phím dấu đôi đầu thành một;
+        // đổi vị trí trong đó về vị trí phím thật.
+        val original = k.substring(bodyStart)
+        val bodyKeys = tailKeys(k, bodyStart)
+        val added = if (bodyKeys.startsWith(RAW) && !original.startsWith(RAW)) 1 else 0
+        val collapsed = original.length - (bodyKeys.length - added)
+        fun keyAt(p: Int): Int {
+            val q = (p - added).coerceAtLeast(0)
+            return bodyStart + if (q > 0) q + collapsed else 0
+        }
+        for ((p, s) in caretStops(bodyKeys)) stops.add(keyAt(p) to head.length + s)
         // Sau âm này và trước âm kế là cùng một chỗ trong chuỗi phím (không có dấu tách giữa): giữ một chỗ dừng.
         return head.toString() + hanNomComposing(bodyKeys) to stops.distinctBy { it.first }
     }
@@ -2100,8 +2145,17 @@ class HanNomIME : InputMethodService(), KeyboardView.Listener, HandwritingView.L
     private fun onCharTimed(text: String, literal: Boolean) {
         commitHandwriting()
         val c = text.singleOrNull()
+        // `\` ở đầu khung gõ Hán Nôm mở mã kiểu LaTeX (`\pi` → π, mục `π;\pi` của từ điển; người dùng muốn 2026-11-23).
+        val latex = c == '\\' && keys.isEmpty() && effectiveMode == Mode.HAN_NOM && !handwriting && !literal
+        // Chữ số vào khung gõ Hán Nôm chỉ khi từ điển có mã bắt đầu đúng bằng phần đang gõ cộng số đó (`红;hong1`,
+        // `洪;hong11`: người dùng tự đặt cách gõ, 2026-11-23); không thì phím số như cũ (chốt chữ rồi thêm số).
+        val codeDigit = c != null && c in '0'..'9' && effectiveMode == Mode.HAN_NOM && !handwriting && !literal &&
+            keys.isNotEmpty() && caretAt == keys.length && keys.first() != '\\' && run {
+                val next = "$keys$c"
+                engine.candidates(next, quocNgu = false, limit = 20).any { it.abbreviated && it.consumed == next.length }
+            }
         val composable = effectiveMode != Mode.ENGLISH && c != null &&
-            (c in 'a'..'z' || c in 'A'..'Z' || (c == '\'' && keys.isNotEmpty() && effectiveMode == Mode.HAN_NOM))
+            (c in 'a'..'z' || c in 'A'..'Z' || latex || codeDigit || (c == '\'' && keys.isNotEmpty() && effectiveMode == Mode.HAN_NOM))
         if (composable) {
             // Dấu tách chữ không gõ liền hai lần.
             if (c == '\'' && (caretAt == 0 || keys[caretAt - 1] == '\'' || keys.getOrNull(caretAt) == '\'')) return

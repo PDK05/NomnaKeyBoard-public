@@ -196,6 +196,7 @@ class WordStore(private val context: Context, private val info: DictInfo) : Dict
     override fun put(old: DictRow?, text: String, readings: String, freq: Int): String? {
         val word = clean(text)
         if (word.isEmpty()) return "Chưa nhập từ"
+        word.firstOrNull(::forbidden)?.let { return "Từ có ký tự không cho phép (U+%04X)".format(it.code) }
         if (word != old?.text && word in words) return "Đã có $word trong từ điển"
         if (old == null) {
             words[word] = freq
@@ -229,7 +230,7 @@ class WordStore(private val context: Context, private val info: DictInfo) : Dict
                 val f = parts.getOrNull(1)?.trim()
                 val freq = if (f.isNullOrEmpty()) 0 else f.toIntOrNull()
                 when {
-                    word.isEmpty() || freq == null || freq < 0 -> errors.add("Dòng ${i + 1}: $line")
+                    word.isEmpty() || word.any(::forbidden) || freq == null || freq < 0 -> errors.add("Dòng ${i + 1}: $line")
                     word in words || word in fresh -> duplicates++
                     else -> {
                         fresh[word] = freq
@@ -296,6 +297,13 @@ class WordStore(private val context: Context, private val info: DictInfo) : Dict
 
         private fun isSeparator(c: Char) = c == ';' || c == '\t' || c == ','
 
+        /**
+         * Ký tự không được có trong từ: ký tự điều khiển, dấu ngăn cột của tệp (`;` tab `,`) và ký tự định hướng vô hình
+         * hay dùng để giả mạo chữ hiển thị (người dùng muốn chặn mã độc, 2026-11-23; như `is_forbidden` của lõi).
+         */
+        fun forbidden(c: Char) = Character.isISOControl(c) || isSeparator(c) ||
+            c == '‎' || c == '‏' || c in '‪'..'‮' || c in '⁦'..'⁩' || c == '﻿'
+
         /** `từ;số` mỗi dòng (cũng nhận tab hay dấu phẩy); dòng `#` bỏ qua, từ trùng lấy lần đầu. */
         fun parse(text: String): LinkedHashMap<String, Int> {
             val out = LinkedHashMap<String, Int>()
@@ -352,6 +360,8 @@ fun Context.dictMessage(message: String): String {
         Regex("^[Tt]hiếu âm đọc sau dấu ;$") to "Missing reading after ;",
         Regex("^[Cc]hữ dài (\\d+) ký tự, tối đa (\\d+)$") to "Text is $1 characters long, at most $2",
         Regex("^\"(.+)\" không phải âm tiết tiếng Việt.*$") to "\"$1\" is not a Vietnamese syllable or a shortcut code (letters only)",
+        Regex("^[Cc]hữ có ký tự không cho phép \\((.+)\\)$") to "Text contains a character that is not allowed ($1)",
+        Regex("^Từ có ký tự không cho phép \\((.+)\\)$") to "Word contains a character that is not allowed ($1)",
     )
     for ((re, en) in rules) if (re.matches(message)) return message.replace(re, en)
     return message

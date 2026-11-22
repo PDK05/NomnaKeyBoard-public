@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="288" viewBox="0 0 1120 576" font-family="Arial, Roboto, sans-serif">
+<rect width="1120" height="576" fill="#4527A0"/>
+<text x="20" y="56" font-size="26" fill="#FFFFFF" font-weight="bold">Hiện tại</text>
+<text x="20" y="88" font-size="20" fill="#FFFFFF">trỏ #9575CD · cách #BF3F5A</text>
+<text x="20" y="116" font-size="20" fill="#FFFFFF">trỏ/cách 1,40 · trỏ/khung 1,75</text>
+<text x="20" y="56" font-size="20" fill="#FFFFFF" text-anchor="end" dx="300">nhấn + đỏ</text>
+<rect x="340" y="28" width="370" height="80" rx="16" fill="#664DB1"/>
+<text x="360" y="82" font-size="36" fill="#FFFFFF">ba mươi</text>
+<rect x="502.0" y="42" width="10.0" height="52" fill="#BF3F5A"/>
+<rect x="498.0" y="44" width="4" height="48" fill="#9575CD"/>
+<rect x="730" y="28" width="370" height="80" rx="16" fill="#664DB1"/>
+<text x="750" y="82" font-size="36" fill="#FFFFFF">ba mươi mốt</text>
+<rect x="889.0" y="44" width="4" height="48" fill="#9575CD"/>
+<text x="20" y="168" font-size="26" fill="#FFFFFF" font-weight="bold">A</text>
+<text x="20" y="200" font-size="20" fill="#FFFFFF">trỏ #FFFFFF · cách #BF3F5A</text>
+<text x="20" y="228" font-size="20" fill="#FFFFFF">trỏ/cách 5,15 · trỏ/khung 6,44</text>
+<text x="20" y="168" font-size="20" fill="#FFFFFF" text-anchor="end" dx="300">trắng + giữ đỏ</text>
+<rect x="340" y="140" width="370" height="80" rx="16" fill="#664DB1"/>
+<text x="360" y="194" font-size="36" fill="#FFFFFF">ba mươi</text>
+<rect x="502.0" y="154" width="10.0" height="52" fill="#BF3F5A"/>
+<rect x="498.0" y="156" width="4" height="48" fill="#FFFFFF"/>
+<rect x="730" y="140" width="370" height="80" rx="16" fill="#664DB1"/>
+<text x="750" y="194" font-size="36" fill="#FFFFFF">ba mươi mốt</text>
+<rect x="889.0" y="156" width="4" height="48" fill="#FFFFFF"/>
+<text x="20" y="280" font-size="26" fill="#FFFFFF" font-weight="bold">B</text>
+<text x="20" y="312" font-size="20" fill="#FFFFFF">trỏ #E2DAF1 · cách #BF3F5A</text>
+<text x="20" y="340" font-size="20" fill="#FFFFFF">trỏ/cách 3,81 · trỏ/khung 4,76</text>
+<text x="20" y="280" font-size="20" fill="#FFFFFF" text-anchor="end" dx="300">tím rất nhạt + giữ đỏ</text>
+<rect x="340" y="252" width="370" height="80" rx="16" fill="#664DB1"/>
+<text x="360" y="306" font-size="36" fill="#FFFFFF">ba mươi</text>
+<rect x="502.0" y="266" width="10.0" height="52" fill="#BF3F5A"/>
+<rect x="498.0" y="268" width="4" height="48" fill="#E2DAF1"/>
+<rect x="730" y="252" width="370" height="80" rx="16" fill="#664DB1"/>
+<text x="750" y="306" font-size="36" fill="#FFFFFF">ba mươi mốt</text>
+<rect x="889.0" y="268" width="4" height="48" fill="#E2DAF1"/>
+<text x="20" y="392" font-size="26" fill="#FFFFFF" font-weight="bold">C</text>
+<text x="20" y="424" font-size="20" fill="#FFFFFF">trỏ #FFFFFF · cách #26184F</text>
+<text x="20" y="452" font-size="20" fill="#FFFFFF">trỏ/cách 15,84 · trỏ/khung 6,44</text>
+<text x="20" y="392" font-size="20" fill="#FFFFFF" text-anchor="end" dx="300">trắng + tím sẫm</text>
+<rect x="340" y="364" width="370" height="80" rx="16" fill="#664DB1"/>
+<text x="360" y="418" font-size="36" fill="#FFFFFF">ba mươi</text>
+<rect x="502.0" y="378" width="10.0" height="52" fill="#26184F"/>
+<rect x="498.0" y="380" width="4" height="48" fill="#FFFFFF"/>
+<rect x="730" y="364" width="370" height="80" rx="16" fill="#664DB1"/>
+<text x="750" y="418" font-size="36" fill="#FFFFFF">ba mươi mốt</text>
+<rect x="889.0" y="380" width="4" height="48" fill="#FFFFFF"/>
+<text x="20" y="504" font-size="26" fill="#FFFFFF" font-weight="bold">D</text>
+<text x="20" y="536" font-size="20" fill="#FFFFFF">trỏ #FFFFFF · cách #5E1827</text>
+<text x="20" y="564" font-size="20" fill="#FFFFFF">trỏ/cách 12,84 · trỏ/khung 6,44</text>
+<text x="20" y="504" font-size="20" fill="#FFFFFF" text-anchor="end" dx="300">trắng + đỏ sẫm</text>
+<rect x="340" y="476" width="370" height="80" rx="16" fill="#664DB1"/>
+<text x="360" y="530" font-size="36" fill="#FFFFFF">ba mươi</text>
+<rect x="502.0" y="490" width="10.0" height="52" fill="#5E1827"/>
+<rect x="498.0" y="492" width="4" height="48" fill="#FFFFFF"/>
+<rect x="730" y="476" width="370" height="80" rx="16" fill="#664DB1"/>
+<text x="750" y="530" font-size="36" fill="#FFFFFF">ba mươi mốt</text>
+<rect x="889.0" y="492" width="4" height="48" fill="#FFFFFF"/>
+</svg>

@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1060" height="364" viewBox="0 0 2120 728" font-family="Arial, Roboto, 'Noto Sans CJK SC', sans-serif">
+<rect width="2120" height="728" fill="#948B86"/>
+<text x="24" y="44" font-size="26" font-weight="bold" fill="#FFFFFF" stroke="#000" stroke-opacity="0.35" stroke-width="1.2" paint-order="stroke">Hiện tại · #FF7276</text>
+<text x="24" y="76" font-size="20" fill="#FFFFFF" stroke="#000" stroke-opacity="0.35" stroke-width="1.2" paint-order="stroke">nền nhấn nhạt</text>
+<text x="24" y="104" font-size="20" fill="#FFFFFF" stroke="#000" stroke-opacity="0.35" stroke-width="1.2" paint-order="stroke">chữ/dòng 1,91 · chữ/thẻ 2,24</text>
+<rect x="24" y="124" width="500" height="600" rx="44" fill="#F0EBE7"/>
+<text x="274.0" y="192" font-size="34" fill="#1E1E1E" text-anchor="middle">Thay đổi bàn phím</text>
+<rect x="44" y="228" width="460" height="100" rx="50" fill="#F3D4D2"/>
+<polyline points="72,278 84,290 108,266" fill="none" stroke="#FF7276" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="136" y="272" font-size="28" fill="#FF7276">Tiếng Việt (Latinh)</text>
+<text x="136" y="306" font-size="23.0" fill="#FF7276">QWERTY (Telex)</text>
+<text x="136" y="384" font-size="28" fill="#1E1E1E">㗂越 (漢喃)</text>
+<text x="136" y="418" font-size="23.0" fill="#44413F">QWERTY (Telex)</text>
+<text x="136" y="496" font-size="28" fill="#1E1E1E">English (US)</text>
+<text x="136" y="530" font-size="23.0" fill="#44413F">QWERTY</text>
+<text x="488" y="680" font-size="26" fill="#FF7276" text-anchor="end">Cài đặt ngôn ngữ</text>
+<text x="548" y="44" font-size="26" font-weight="bold" fill="#FFFFFF" stroke="#000" stroke-opacity="0.35" stroke-width="1.2" paint-order="stroke">A · #D60006</text>
+<text x="548" y="76" font-size="20" fill="#FFFFFF" stroke="#000" stroke-opacity="0.35" stroke-width="1.2" paint-order="stroke">nhấn đậm hơn · nền nhấn cũ</text>
+<text x="548" y="104" font-size="20" fill="#FFFFFF" stroke="#000" stroke-opacity="0.35" stroke-width="1.2" paint-order="stroke">chữ/dòng 3,93 · chữ/thẻ 4,59</text>
+<rect x="548" y="124" width="500" height="600" rx="44" fill="#F0EBE7"/>
+<text x="798.0" y="192" font-size="34" fill="#1E1E1E" text-anchor="middle">Thay đổi bàn phím</text>
+<rect x="568" y="228" width="460" height="100" rx="50" fill="#F3D4D2"/>
+<polyline points="596,278 608,290 632,266" fill="none" stroke="#D60006" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="660" y="272" font-size="28" fill="#D60006">Tiếng Việt (Latinh)</text>
+<text x="660" y="306" font-size="23.0" fill="#D60006">QWERTY (Telex)</text>
+<text x="660" y="384" font-size="28" fill="#1E1E1E">㗂越 (漢喃)</text>
+<text x="660" y="418" font-size="23.0" fill="#44413F">QWERTY (Telex)</text>
+<text x="660" y="496" font-size="28" fill="#1E1E1E">English (US)</text>
+<text x="660" y="530" font-size="23.0" fill="#44413F">QWERTY</text>
+<text x="1012" y="680" font-size="26" fill="#D60006" text-anchor="end">Cài đặt ngôn ngữ</text>
+<text x="1072" y="44" font-size="26" font-weight="bold" fill="#FFFFFF" stroke="#000" stroke-opacity="0.35" stroke-width="1.2" paint-order="stroke">B · #660003</text>
+<text x="1072" y="76" font-size="20" fill="#FFFFFF" stroke="#000" stroke-opacity="0.35" stroke-width="1.2" paint-order="stroke">= màu con trỏ · nền nhấn cũ</text>
+<text x="1072" y="104" font-size="20" fill="#FFFFFF" stroke="#000" stroke-opacity="0.35" stroke-width="1.2" paint-order="stroke">chữ/dòng 9,68 · chữ/thẻ 11,33</text>
+<rect x="1072" y="124" width="500" height="600" rx="44" fill="#F0EBE7"/>
+<text x="1322.0" y="192" font-size="34" fill="#1E1E1E" text-anchor="middle">Thay đổi bàn phím</text>
+<rect x="1092" y="228" width="460" height="100" rx="50" fill="#F3D4D2"/>
+<polyline points="1120,278 1132,290 1156,266" fill="none" stroke="#660003" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1184" y="272" font-size="28" fill="#660003">Tiếng Việt (Latinh)</text>
+<text x="1184" y="306" font-size="23.0" fill="#660003">QWERTY (Telex)</text>
+<text x="1184" y="384" font-size="28" fill="#1E1E1E">㗂越 (漢喃)</text>
+<text x="1184" y="418" font-size="23.0" fill="#44413F">QWERTY (Telex)</text>
+<text x="1184" y="496" font-size="28" fill="#1E1E1E">English (US)</text>
+<text x="1184" y="530" font-size="23.0" fill="#44413F">QWERTY</text>
+<text x="1536" y="680" font-size="26" fill="#660003" text-anchor="end">Cài đặt ngôn ngữ</text>
+<text x="1596" y="44" font-size="26" font-weight="bold" fill="#FFFFFF" stroke="#000" stroke-opacity="0.35" stroke-width="1.2" paint-order="stroke">C · #1E1E1E</text>
+<text x="1596" y="76" font-size="20" fill="#FFFFFF" stroke="#000" stroke-opacity="0.35" stroke-width="1.2" paint-order="stroke">= màu chữ · nền nhấn cũ</text>
+<text x="1596" y="104" font-size="20" fill="#FFFFFF" stroke="#000" stroke-opacity="0.35" stroke-width="1.2" paint-order="stroke">chữ/dòng 12,03 · chữ/thẻ 14,08</text>
+<rect x="1596" y="124" width="500" height="600" rx="44" fill="#F0EBE7"/>
+<text x="1846.0" y="192" font-size="34" fill="#1E1E1E" text-anchor="middle">Thay đổi bàn phím</text>
+<rect x="1616" y="228" width="460" height="100" rx="50" fill="#F3D4D2"/>
+<polyline points="1644,278 1656,290 1680,266" fill="none" stroke="#1E1E1E" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1708" y="272" font-size="28" fill="#1E1E1E">Tiếng Việt (Latinh)</text>
+<text x="1708" y="306" font-size="23.0" fill="#1E1E1E">QWERTY (Telex)</text>
+<text x="1708" y="384" font-size="28" fill="#1E1E1E">㗂越 (漢喃)</text>
+<text x="1708" y="418" font-size="23.0" fill="#44413F">QWERTY (Telex)</text>
+<text x="1708" y="496" font-size="28" fill="#1E1E1E">English (US)</text>
+<text x="1708" y="530" font-size="23.0" fill="#44413F">QWERTY</text>
+<text x="2060" y="680" font-size="26" fill="#1E1E1E" text-anchor="end">Cài đặt ngôn ngữ</text>
+</svg>

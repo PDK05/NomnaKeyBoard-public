@@ -145,6 +145,10 @@ class KeyboardView(context: Context, private val listener: Listener, private val
         set(v) {
             if (field == v) return
             field = v
+            // Khe và lề phím đổi theo (một tay xếp sát hơn): đo và xếp lại cả khi khối không đổi cỡ.
+            layoutKeys()
+            requestLayout()
+            invalidate()
             onOneHandChange?.invoke()
         }
     val effectiveOneHand get() = if (handwriting || landscape) OneHand.OFF else oneHand
@@ -196,21 +200,86 @@ class KeyboardView(context: Context, private val listener: Listener, private val
     }
     private val icons = HashMap<Int, Drawable>()
     private val radius = context.dp(7f)
-    private val gapX = context.dp(5f)
+    /** Bàn phím một tay đang dùng (màn hình dọc): phím xếp sát hơn, như Gboard ([ONE_HAND_GAP_X_DP] …). */
+    private val oneHandKeys get() = effectiveOneHand != OneHand.OFF
+    /** Khe giữa hai phím trong hàng: 5 dp; một tay 12–13 px ở mọi bề rộng (Gboard, đo 2026-11-22). */
+    private val gapX get() = context.dp(if (oneHandKeys) ONE_HAND_GAP_X_DP else 5f)
     /** Khe giữa các hàng (màn hình dọc): 8 dp như Gboard (đo trên điện thoại 2026-11-18: 28 px ở 3,5 px/dp). */
     private val gapY = context.dp(8f)
-    /** Lề trên và dưới khối phím; màn hình ngang sát hơn để hàng phím đầu nằm đúng chỗ như Gboard. */
-    private val padTop get() = context.dp(if (landscape) 0.5f else 2f)
+    /**
+     * Một tay: 0 ở hàng chữ thấp nhất, 1 từ cỡ mặc định trở lên. Gboard một tay kéo thấp hơn mặc định thì co cả khe
+     * giữa các hàng lẫn lề trên / dưới khối phím; cao hơn mặc định thì chỉ phím cao thêm.
+     */
+    private fun oneHandT(row: Float) =
+        ((row / context.dp(1f) - ONE_HAND_MIN_ROW_DP) / (ONE_HAND_ROW_DP - ONE_HAND_MIN_ROW_DP)).coerceIn(0f, 1f)
+    /** Khe giữa các hàng chữ khi hàng chữ (cả khe) cao [row] px. */
+    private fun rowGapAt(row: Float) = when {
+        landscape -> landscapeGapY
+        oneHandKeys -> context.dp(ONE_HAND_GAP_Y_MIN_DP + (ONE_HAND_GAP_Y_DP - ONE_HAND_GAP_Y_MIN_DP) * oneHandT(row))
+        else -> gapY
+    }
+    /**
+     * Lề trên / dưới khối phím (không kể nửa khe hàng); màn hình ngang sát hơn để hàng phím đầu nằm đúng chỗ như
+     * Gboard. Một tay: tính để mép trên phím đầu cách đỉnh khối 7–21 px, đáy phím cách đáy khối 13–16 px như Gboard
+     * (âm được: nửa khe hàng đã lớn hơn khoảng đó).
+     */
+    private fun padTopAt(row: Float) = when {
+        landscape -> context.dp(0.5f)
+        oneHandKeys -> context.dp(ONE_HAND_KEY_TOP_DP + ONE_HAND_KEY_TOP_GROW_DP * oneHandT(row)) - rowGapAt(row) / 2
+        else -> context.dp(2f)
+    }
+    private fun padBottomAt(row: Float) = when {
+        oneHandKeys -> context.dp(ONE_HAND_KEY_BOTTOM_DP + ONE_HAND_KEY_BOTTOM_GROW_DP * oneHandT(row)) - rowGapAt(row) / 2
+        else -> padTopAt(row)
+    }
+    private val padTop get() = padTopAt(rowHeight)
+    private val padBottom get() = padBottomAt(rowHeight)
     private val landscapeGapY = context.dp(InputRoot.LANDSCAPE_GAP_Y)
-    private val rowGap get() = if (landscape) landscapeGapY else gapY
+    private val rowGap get() = rowGapAt(rowHeight)
     /** Trang 5 hàng: hàng số trên cùng thấp hơn hàng chữ (như Gboard, cả hai chiều màn hình). */
     private val shortNumberRow get() = rows.size == Layouts.MAX_ROWS
-    /** Hàng số so với hàng chữ, và hàng phím cách so với hàng chữ (đo trên Gboard). */
-    private val numberRowRatio get() = if (landscape) InputRoot.LANDSCAPE_NUMBER_ROW else InputRoot.PORTRAIT_NUMBER_ROW
+    /** Chiều cao hàng số (cả khe). Ngang: tuyến tính theo hàng chữ, khớp Gboard ở cả cỡ mặc định lẫn thấp nhất. */
+    private fun numberPitchAt(row: Float) =
+        if (landscape) row * InputRoot.LANDSCAPE_NUMBER_ROW + context.dp(InputRoot.LANDSCAPE_NUMBER_ROW_DP)
+        else row * InputRoot.PORTRAIT_NUMBER_ROW
+    private val numberPitch get() = numberPitchAt(rowHeight)
     /** Chiều cao hàng phím cách (cả khe). */
-    private val bottomRow get() = rowHeight * if (landscape) InputRoot.LANDSCAPE_BOTTOM_ROW else InputRoot.PORTRAIT_BOTTOM_ROW
+    private fun bottomRowAt(row: Float) = when {
+        landscape -> row * InputRoot.LANDSCAPE_BOTTOM_ROW + context.dp(InputRoot.LANDSCAPE_BOTTOM_ROW_DP)
+        // Một tay thấp hơn mặc định: phím cách ngắn đi tới 3,5 px, lề dưới rộng ra chừng đó (Gboard thấp nhất: phím cách
+        // 112 px, đáy cách đáy khối 13 px).
+        oneHandKeys -> row * InputRoot.PORTRAIT_BOTTOM_ROW + context.dp(InputRoot.PORTRAIT_BOTTOM_ROW_DP) -
+            context.dp(ONE_HAND_SPACE_SHRINK_DP) * (1f - oneHandT(row))
+        else -> row * InputRoot.PORTRAIT_BOTTOM_ROW + context.dp(InputRoot.PORTRAIT_BOTTOM_ROW_DP)
+    }
+    private val bottomRow get() = bottomRowAt(rowHeight)
     /** Chiều cao phần phía trên hàng phím cách ở trang 5 hàng. */
-    private val rowsAbove get() = rowHeight * (if (numberRow) numberRowRatio + 3 else 3f)
+    private fun rowsAboveAt(row: Float) = if (numberRow) numberPitchAt(row) + row * 3 else row * 3
+    private val rowsAbove get() = rowsAboveAt(rowHeight)
+
+    /**
+     * Chiều cao (px) trang chữ khi hàng chữ cao [row] px: để khung "Kích thước" tính cỡ hàng từ chiều cao khung (một
+     * tay thì lề và khe co theo cỡ, không còn tuyến tính).
+     */
+    fun letterPageHeight(row: Float) = rowsAboveAt(row) + bottomRowAt(row) + padTopAt(row) + padBottomAt(row)
+
+    /** Lề trái của ô phím đầu hàng (phím lùi vào thêm gapX / 2) và bề rộng một đơn vị phím. Một tay: vùng phím = khối. */
+    private val keyLeft get() = when {
+        landscape -> insetLeft
+        oneHandKeys -> 0f
+        else -> gapX / 2
+    }
+    private val keyUnit get() = when {
+        landscape -> (width - insetLeft - insetRight) / 10f
+        oneHandKeys -> width / 10f
+        else -> (width - gapX) / 10f
+    }
+    /** Khe dưới hàng số, màn hình dọc: 24 px; một tay hẹp hơn khe hàng chữ 3,5 px (Gboard 18–21 px). */
+    private val numberGap get() =
+        if (oneHandKeys) rowGap - context.dp(1f) else context.dp(PORTRAIT_NUMBER_GAP_DP)
+    /** Khe giữa các hàng trang ?123 / =\<, màn hình dọc: ~58 px; một tay 44–50 px, luôn ≈ 2,04 khe hàng chữ (Gboard). */
+    private val fewRowsGap get() =
+        if (oneHandKeys) rowGap * ONE_HAND_FEW_ROWS_GAP else context.dp(PORTRAIT_FEW_ROWS_GAP_DP)
     /** Chiều cao các hàng trên hàng phím cách ở trang đang hiện; trang ít hàng thì phím cao hơn. */
     private var pageRowHeight = rowHeight
 
@@ -329,7 +398,7 @@ class KeyboardView(context: Context, private val listener: Listener, private val
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val h = if (page == Page.PHONEPAD) (phonepadRow * rows.size + padTop * 2).toInt()
-        else (rowsAbove + bottomRow + padTop * 2).toInt()
+        else (rowsAbove + bottomRow + padTop + padBottom).toInt()
         setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), h)
     }
 
@@ -345,13 +414,13 @@ class KeyboardView(context: Context, private val listener: Listener, private val
 
     /** Bàn phím số: ba hàng trên chia đều, cột phép tính cao bằng cả ba hàng, hiện [Layouts.RAIL_VISIBLE] phím. */
     private fun layoutNumpad() {
-        val left = if (landscape) insetLeft else gapX / 2
-        val unit = if (landscape) (width - insetLeft - insetRight) / 10f else (width - gapX) / 10f
+        val left = keyLeft
+        val unit = keyUnit
         val gap = rowGap
         // Màn hình dọc: ba hàng số sát nhau hơn trang chữ, khe 6 dp, phím cao hơn (Gboard, đo 2026-11-18: phím 190 px,
         // bước 211 px); hàng dưới cùng như trang chữ.
         val numGap = if (landscape) gap else context.dp(NUMPAD_GAP_DP)
-        pageRowHeight = (height - padTop * 2 - bottomRow) / 3
+        pageRowHeight = (height - padTop - padBottom - bottomRow) / 3
         var top = padTop + gap / 2
         val railTop = top
         rows.forEachIndexed { r, row ->
@@ -431,26 +500,35 @@ class KeyboardView(context: Context, private val listener: Listener, private val
         if (page == Page.NUMPAD) return layoutNumpad()
         if (page == Page.PHONEPAD) return layoutPhonepad()
         // [left] là mép trái ô phím đầu hàng (phím lùi vào thêm gapX / 2).
-        val left = if (landscape) insetLeft else gapX / 2
-        val unit = if (landscape) (width - insetLeft - insetRight) / 10f else (width - gapX) / 10f
+        val left = keyLeft
+        val unit = keyUnit
         val gap = rowGap
         // Hàng đầu và hàng phím cách đứng yên như trang chữ. Trang ít hàng thì các hàng trên
         // dàn đều: phím cao thêm chút, khe giữa các hàng rộng ra ~30% phím (như Gboard).
         // Chỉ một hàng (viết tay): hàng đó nằm ở đáy như hàng phím cách của trang chữ.
-        val above = height - padTop * 2 - bottomRow
+        val above = height - padTop - padBottom - bottomRow
         pageRowHeight = if (rows.size > 1) above / (rows.size - 1) else above
-        // Trang ít hàng (?123, =\<): phím cao bằng bước hàng / 1,4 ở màn hình dọc như Gboard (đo 2026-11-18: phím 151 px,
-        // bước 211 px); ngang giữ 1,3.
-        val keyHeight = maxOf(rowHeight - gap, pageRowHeight / if (landscape) 1.3f else 1.4f)
+        // Trang ít hàng (?123, =\<), màn hình dọc: khe giữa các hàng cố định ~58 px như Gboard, cỡ nào cũng vậy (đo
+        // 2026-11-22: phím / bước 87 / 145 px thấp nhất, 285 / 342 px cao nhất; 2026-11-18 mặc định 151 / 211 px). Trước
+        // đây phím = bước / 1,4, chỉ đúng ở cỡ mặc định. Ngang giữ 1,3 (chưa đo ở các giới hạn).
+        val keyHeight = maxOf(
+            rowHeight - gap,
+            if (landscape) pageRowHeight / 1.3f else pageRowHeight - fewRowsGap,
+        )
         var top = padTop + gap / 2 + if (rows.size > 1) 0f else pageRowHeight
         rows.forEachIndexed { r, row ->
             val pitch = when {
                 r == rows.lastIndex -> bottomRow
                 !shortNumberRow -> pageRowHeight
-                r == 0 -> rowHeight * numberRowRatio
+                r == 0 -> numberPitch
                 else -> rowHeight
             }
-            val h = if (r == rows.lastIndex || shortNumberRow) pitch - gap else keyHeight
+            val h = when {
+                // Màn hình dọc: khe dưới hàng số 24 px, hẹp hơn khe các hàng chữ 28 px (Gboard, đo 2026-11-22 ở cả ba cỡ).
+                shortNumberRow && r == 0 && !landscape -> pitch - numberGap
+                r == rows.lastIndex || shortNumberRow -> pitch - gap
+                else -> keyHeight
+            }
             var x = left
             row.forEach { k ->
                 val w = unit * k.weight
@@ -468,7 +546,7 @@ class KeyboardView(context: Context, private val listener: Listener, private val
     fun sideAnchors(): Pair<List<Float>, Float> {
         if (rows.isEmpty()) return emptyList<Float>() to 0f
         val at = listOf(0, rows.size / 2, rows.lastIndex)
-        return at.map { rows[it].first().rect.centerY() } to rowHeight - gapY
+        return at.map { rows[it].first().rect.centerY() } to rowHeight - rowGap
     }
 
     /**
@@ -542,17 +620,36 @@ class KeyboardView(context: Context, private val listener: Listener, private val
             if (k.type == KeyType.TO_NUMPAD) {
                 // Phím `12/34`: hai dòng chữ đậm như Gboard.
                 labelPaint.color = fg
-                labelPaint.textSize = textRow * 0.3f
+                // Đo Gboard 2026-11-22: chữ số cỡ 13,7 sp ở 100%, to theo [FontScale.SMALL_LABEL] (không theo bảng chữ).
+                labelPaint.textSize = textRow * 0.274f * FontScale.icon(FontScale.SMALL_LABEL, labelScale)
                 labelPaint.isFakeBoldText = true
-                canvas.drawText("12", k.rect.centerX(), k.rect.centerY() - labelPaint.textSize * 0.14f, labelPaint)
-                canvas.drawText("34", k.rect.centerX(), k.rect.centerY() + labelPaint.textSize * 0.92f, labelPaint)
+                // Chữ số giãn như Gboard ("1 2": hai chữ số rộng 59 px khi cao 34 px; Android chia khoảng giãn đều hai
+                // bên mỗi chữ nên vẫn nằm giữa). Hai dòng cách nhau như Gboard (đo 2026-11-22 ở 200%: 16 px).
+                labelPaint.letterSpacing = 0.27f
+                val cx = k.rect.centerX()
+                canvas.drawText("12", cx, k.rect.centerY() - labelPaint.textSize * 0.115f, labelPaint)
+                canvas.drawText("34", cx, k.rect.centerY() + labelPaint.textSize * 0.87f, labelPaint)
+                labelPaint.letterSpacing = 0f
                 labelPaint.isFakeBoldText = false
                 continue
             }
             val res = icon(k)
             if (res != null) {
                 val d = icons.getOrPut(res) { context.getDrawable(res)!!.mutate() }
-                val half = (textRow * if (k.type == KeyType.SHIFT) 0.32f else 0.23f).toInt()
+                // Icon to theo "Cỡ chữ" như Gboard ([FontScale.icon]); icon dấu cách ở bàn phím số giữ nguyên.
+                val grow = when (k.type) {
+                    KeyType.SHIFT -> FontScale.icon(FontScale.SHIFT_ICON, labelScale)
+                    KeyType.DELETE, KeyType.ENTER -> FontScale.icon(FontScale.KEY_ICON, labelScale)
+                    else -> 1f
+                }
+                // Cỡ ở 100% theo Gboard (đo trên điện thoại 2026-11-22: xoá 89 × 72 px, enter ↵ 75 × 47 px ở 3,5 px/dp).
+                val size = when (k.type) {
+                    KeyType.SHIFT -> 0.32f
+                    KeyType.DELETE -> 0.26f
+                    KeyType.ENTER -> 0.28f
+                    else -> 0.23f
+                }
+                val half = (grow * textRow * size).toInt()
                 val cx = k.rect.centerX().toInt()
                 val cy = k.rect.centerY().toInt()
                 d.setTint(fg)
@@ -565,7 +662,19 @@ class KeyboardView(context: Context, private val listener: Listener, private val
             // Chữ Nôm ngoài BMP (phím 𢮿徠) không có trong Roboto.
             labelPaint.typeface = if (text.any { it.isHighSurrogate() }) context.hanNomTypeface() ?: roboto else roboto
             labelPaint.color = if (k.type == KeyType.SPACE || lifted) theme.hintText else fg
-            labelPaint.textSize = labelScale * when {
+            // Cỡ chữ phóng phi tuyến như Gboard ([FontScale]): chữ phím 24 sp ở nấc 200% thành 36 sp, không phải 48.
+            val density = resources.displayMetrics.density
+            // `=\<` (và nhãn cùng cỡ) to theo kiểu icon, không theo bảng chữ (đo Gboard 2026-11-22: 180% ×1,14, 200% ×1,23).
+            // `?123` ở trang =\< (phím vuông) cùng cỡ `?123` ở trang chữ, không như `=\<` (người dùng báo 2026-11-18).
+            val smallLabel = k.type == KeyType.TO_SYMBOLS2 || k.type == KeyType.SHIFT ||
+                (k.type == KeyType.TO_SYMBOLS && !k.isPill && text != "?123")
+            // Cỡ ở 100%: 0,42 → 0,34 cho bằng Gboard (đo 2026-11-22: `=\<` 85 × 43 px, của mình trước đó 96 × 58 px).
+            // `?123` ở trang =\< (phím vuông): cỡ như `?123` trang chữ ở 100%, nhưng to kiểu `=\<` (Gboard 2026-11-22:
+            // 110 × 39 px ở 100%, 137 × 48 px ở 200%, ×1,24).
+            val squareToSymbols = k.type == KeyType.TO_SYMBOLS && !k.isPill && text == "?123"
+            labelPaint.textSize = if (squareToSymbols) textRow * 0.32f * FontScale.icon(FontScale.SMALL_LABEL, labelScale)
+            else if (smallLabel) textRow * 0.34f * FontScale.icon(FontScale.SMALL_LABEL, labelScale)
+            else density * FontScale.apply(labelScale, 1f / density * when {
                 // Số ở bàn phím số to hơn chữ trên phím thường, như Gboard.
                 // Cột phép tính ở màn hình ngang: ký hiệu nhỏ hơn phím khác (Gboard đo trên điện thoại 2026-11-17: + cao
                 // chừng 0,6 lần %).
@@ -573,16 +682,24 @@ class KeyboardView(context: Context, private val listener: Listener, private val
                 numberPage && k.type == KeyType.CHAR && !k.isSpecial -> textRow * 0.62f
                 page == Page.PHONEPAD && k.type == KeyType.CHAR -> textRow * 0.48f
                 k.type == KeyType.SPACE -> if (text.length == 1) textRow * 0.48f else textRow * 0.3f
-                // `?123` ở trang =\< (phím vuông) cùng cỡ `?123` ở trang chữ, không to như `=\<` (người dùng báo
-                // 2026-11-18); `!?#` của bàn phím số giữ cỡ cũ.
-                k.type == KeyType.TO_SYMBOLS2 || k.type == KeyType.SHIFT ||
-                    (k.type == KeyType.TO_SYMBOLS && !k.isPill && text != "?123") -> textRow * 0.42f
                 k.type == KeyType.MODE || k.type == KeyType.TO_LETTERS || text.length > 2 -> textRow * 0.32f
                 // Hàng số ở màn hình ngang thấp hơn nên chữ nhỏ hơn hàng chữ một chút.
                 landscape && shortNumberRow && row === rows[0] -> textRow * 0.48f * InputRoot.LANDSCAPE_NUMBER_TEXT
                 else -> textRow * 0.48f
-            }
+            })
+            // Nhãn rộng hơn phím thì thu lại cho vừa, như Gboard (đo 2026-11-22: `?123` ở nấc 180% / 200% dừng ~24,6 sp,
+            // khít bề rộng phím, không lên 26 / 28 sp như bảng phóng chữ).
+            // Nhãn nhiều chữ số (`?123`): chữ số theo bề rộng thật như Gboard. Roboto mặc định chữ số đều bề rộng, số 1
+            // chiếm ô rộng nên `?123` rộng hơn Gboard ~10% dù cùng cỡ chữ (đo trên điện thoại 2026-11-18: 114 / 104 px).
+            labelPaint.fontFeatureSettings = if (text.length > 1 && k.isSpecial) "pnum" else null
+            labelPaint.measureText(text).let { w -> if (w > k.rect.width()) labelPaint.textSize *= k.rect.width() / w }
             var y = k.rect.centerY() - (labelPaint.ascent() + labelPaint.descent()) / 2
+            if (text == "©" || text == "®") {
+                // Nhỏ, canh đỉnh chữ như Gboard (đo 2026-11-22: cao 0,65 lần `%`, cùng đỉnh). Chữ hoa Roboto cao ~0,711 cỡ.
+                val top = y - labelPaint.textSize * 0.711f
+                labelPaint.textSize *= 0.65f
+                y = top + labelPaint.textSize * 0.711f
+            }
             k.hintIcon?.let { res ->
                 // Icon nhỏ giữa phía trên, chữ dịch xuống nửa dưới (phím phẩy của Gboard).
                 val d = icons.getOrPut(res) { context.getDrawable(res)!!.mutate() }
@@ -597,9 +714,6 @@ class KeyboardView(context: Context, private val listener: Listener, private val
                 y += k.rect.height() * 0.03f
             }
             labelPaint.isFakeBoldText = k.type == KeyType.MODE
-            // Nhãn nhiều chữ số (`?123`): chữ số theo bề rộng thật như Gboard. Roboto mặc định chữ số đều bề rộng, số 1
-            // chiếm ô rộng nên `?123` rộng hơn Gboard ~10% dù cùng cỡ chữ (đo trên điện thoại 2026-11-18: 114 / 104 px).
-            labelPaint.fontFeatureSettings = if (text.length > 1 && k.isSpecial) "pnum" else null
             canvas.drawText(text, labelPaint.centerXFor(text, k.rect.centerX()), y, labelPaint)
             labelPaint.fontFeatureSettings = null
             k.hint?.let { hint ->
@@ -922,6 +1036,27 @@ class KeyboardView(context: Context, private val listener: Listener, private val
         private const val RAIL_BAR_ALPHA = 128
         /** Cỡ ký hiệu cột phép tính ở màn hình ngang so với chữ thường trên phím. */
         private const val RAIL_LANDSCAPE_TEXT = 0.65f
+        /** Màn hình dọc: khe dưới hàng số (24 px) và khe giữa các hàng của trang ?123 / =\< (~58 px), đo Gboard 2026-11-22. */
+        private const val PORTRAIT_NUMBER_GAP_DP = 6.86f
+        private const val PORTRAIT_FEW_ROWS_GAP_DP = 16.7f
+        /**
+         * Bàn phím một tay, đo Gboard trên điện thoại 2026-11-22 (3,5 px/dp; phím / khe, px). Ngang: khe 12–13 px ở mọi
+         * bề rộng (khung 75% / 87%: phím 81 / 94), phím đầu cách mép khung 8 px. Dọc: bước hàng chữ mặc định 148 px
+         * ([ONE_HAND_ROW_DP]), thấp nhất 125,5 px ([ONE_HAND_MIN_ROW_DP]); khe hàng chữ 21,5 px thấp nhất, 24,5 px từ
+         * mặc định trở lên; hàng số 99 / 18, 117 / 21, 182 / 21 (thấp nhất / mặc định / cao nhất); mép trên phím đầu
+         * cách đỉnh khối 7 → 21 px, đáy phím cách đáy khối 13 → 16 px; trang ?123 khe 44 → 50 px.
+         */
+        private const val ONE_HAND_GAP_X_DP = 3.7f
+        const val ONE_HAND_ROW_DP = 42.29f
+        private const val ONE_HAND_MIN_ROW_DP = 35.86f
+        private const val ONE_HAND_GAP_Y_MIN_DP = 6.14f
+        private const val ONE_HAND_GAP_Y_DP = 7f
+        private const val ONE_HAND_KEY_TOP_DP = 2f
+        private const val ONE_HAND_KEY_TOP_GROW_DP = 4f
+        private const val ONE_HAND_KEY_BOTTOM_DP = 3.71f
+        private const val ONE_HAND_KEY_BOTTOM_GROW_DP = 0.86f
+        private const val ONE_HAND_SPACE_SHRINK_DP = 1f
+        private const val ONE_HAND_FEW_ROWS_GAP = 2.04f
         /** Bước hàng bàn phím số màn hình ngang so với hàng chữ (Gboard: 140 px / 38.9 dp ở 3.5x). */
         private const val PHONEPAD_ROW = 1.027f
     }

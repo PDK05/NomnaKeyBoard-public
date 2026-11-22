@@ -25,7 +25,7 @@ import kotlin.math.abs
  * Như Gboard, lúc kéo chỉ khung di chuyển (tràn được lên trên ứng dụng hay xuống dưới đáy), bàn phím đứng yên; thả tay
  * thì [InputRoot] mới đổi bàn phím theo khung. Vì vậy view này phủ cả [InputRoot], chỉ làm mờ vùng bàn phím và vùng
  * trong khung. Chỉ tô đỏ khi kéo chạm giới hạn: kéo cạnh / góc thì đỏ cả khung; kéo ✥ thì
- * đỏ cạnh phía đang dời tới. Kéo báo độ dời theo px qua [Listener], "Đặt lại" và "Xong"
+ * đỏ cạnh phía đang dời tới (màn hình ngang: đỏ cả cạnh trên lẫn dưới). Kéo báo độ dời theo px qua [Listener], "Đặt lại" và "Xong"
  * cũng vậy; [InputRoot] tính khung mới, đổi kích thước và lưu.
  */
 @SuppressLint("ViewConstructor")
@@ -60,6 +60,9 @@ class ResizeOverlay(context: Context, private val listener: Listener) : FrameLay
             styleButtons()
             invalidate()
         }
+
+    /** Màn hình ngang: kéo ✥ chạm giới hạn dọc thì đỏ cả hai cạnh trên, dưới. */
+    var landscape = false
 
     /** Khung (px, toạ độ view này); [sides]: có cạnh trái / phải và góc kéo được (một tay). */
     private val box = RectF()
@@ -271,7 +274,12 @@ class ResizeOverlay(context: Context, private val listener: Listener) : FrameLay
                 val (stopX, stopY) = listener.onResizeMove(dx, dy)
                 // Chạm giới hạn: tô đỏ cạnh phía đang dời tới. Không dời theo chiều nào thì giữ nguyên chiều đó.
                 if (dx != 0f) mark(if (dx < 0) Edge.LEFT else Edge.RIGHT, if (dx < 0) Edge.RIGHT else Edge.LEFT, stopX)
-                if (dy != 0f) mark(if (dy < 0) Edge.TOP else Edge.BOTTOM, if (dy < 0) Edge.BOTTOM else Edge.TOP, stopY)
+                // Màn hình ngang: chạm giới hạn dọc thì đỏ cả cạnh trên lẫn cạnh dưới, lên hay xuống cũng vậy (người
+                // dùng muốn 2026-11-22).
+                if (dy != 0f && landscape) {
+                    mark(Edge.TOP, stop = stopY)
+                    mark(Edge.BOTTOM, stop = stopY)
+                } else if (dy != 0f) mark(if (dy < 0) Edge.TOP else Edge.BOTTOM, if (dy < 0) Edge.BOTTOM else Edge.TOP, stopY)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> endDrag()
         }

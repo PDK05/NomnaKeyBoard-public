@@ -1,0 +1,5 @@
+<!-- Tam giác ▼ của nút cuộn xuống trong bảng gợi ý: 44 × 25 px như Gboard Pinyin (đo 2026-11-22, 3,5 px/dp). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="12.6dp" android:height="7.2dp" android:viewportWidth="44" android:viewportHeight="25">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M0,0H44L22,25z" />
+</vector>
